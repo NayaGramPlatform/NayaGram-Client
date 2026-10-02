@@ -1,78 +1,46 @@
-# 🚀 NayaGram Client (Official Open Source Distribution)
+## 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 messenger for Android
 
-> 📘 **Architecture & Pipeline Specification:** Detailed engineering pipeline, anti-delete engine specs, security isolation, and enterprise build architecture are fully documented in [**PLATFORM_PIPELINE.md**](./PLATFORM_PIPELINE.md).  
+[Telegram](https://telegram.org) is a messaging app with a focus on speed and security. It’s superfast, simple and free.
+This repo contains the official source code for [Telegram App for Android](https://play.google.com/store/apps/details?id=org.telegram.messenger).
 
----
+## Creating your Telegram Application
 
-# 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦™ for Android — Official Client Source Code
+We welcome all developers to use our API and source code to create applications on our platform.
+There are several things we require from **all developers** for the moment.
 
-[![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com/)
-[![License: GPL v2/v3](https://img.shields.io/badge/License-GNU%20GPL%20v2%20%2F%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Telegram API](https://img.shields.io/badge/Powered%20By-Telegram%20API-0088cc.svg)](https://core.telegram.org/)
-[![Status](https://img.shields.io/badge/Status-Official%20Public%20Source-brightgreen.svg)]()
+1. [**Obtain your own api_id**](https://core.telegram.org/api/obtaining_api_id) for your application.
+2. Please **do not** use the name Telegram for your app — or make sure your users understand that it is unofficial.
+3. Kindly **do not** use our standard logo (white paper plane in a blue circle) as your app's logo.
+3. Please study our [**security guidelines**](https://core.telegram.org/mtproto/security_guidelines) and take good care of your users' data and privacy.
+4. Please remember to publish **your** code too in order to comply with the licences.
 
-> **NayaGram™** is an enhanced, high-performance, and secure Android messaging client powered by the official **Telegram MTProto API**.  
-> Official Platform: [https://nayagram-privacy-fppvxkd4.agent.mira.tg/](https://nayagram-privacy-fppvxkd4.agent.mira.tg/)  
-> Organization: **NayaGram Platform (𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦)**
+### API, Protocol documentation
 
----
+Telegram API manuals: https://core.telegram.org/api
 
-## ⚖️ Legal Notice, Licensing & Trademark Compliance
+MTproto protocol manuals: https://core.telegram.org/mtproto
 
-### 1. Telegram Terms of Service Compliance
-- This repository is an open-source client based on the official Telegram Android source code under the **GNU General Public License (GPL) v2 or later**.
-- We strictly adhere to the [Telegram API Terms of Service](https://core.telegram.org/api/terms). 
-- All MTProto protocol protocols, network infrastructures, and base messaging primitives remain the intellectual property of Telegram FZ-LLC / Telegram Messenger Inc.
+### Compilation Guide
 
-### 2. Trademark & Identity Protection (Strictly Enforced)
-- **Telegram Trademark:** "Telegram", the Telegram paper plane logo, and related marks are registered trademarks of Telegram FZ-LLC. This repository does not claim any endorsement or direct ownership of Telegram marks.
-- **NayaGram™ Trademark:** The brand names **"NayaGram"**, **"𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦"**, official brand logos, icons, graphics, branding assets, and proprietary design identities are the exclusive intellectual property of **NayaGram Platform** and its founders.
-- **Strict Prohibition:** Under international copyright, trademark, and intellectual property conventions, **no individual or entity is permitted to use the NayaGram™ name, logo, brand assets, or deceptive variations** in third-party forks, repackaged binaries, or commercial offerings without prior written authorization from NayaGram Platform Headquarters.
+**Note**: In order to support [reproducible builds](https://core.telegram.org/reproducible-builds), this repo contains dummy release.keystore,  google-services.json and filled variables inside BuildVars.java. Before publishing your own APKs please make sure to replace all these files with your own.
 
----
+You will require Android Studio 2025.1.4, Android NDK 27.2.12479018 and Android SDK 36.
 
-## 🔒 Security & API Key Guidelines (GPL Compliant)
-
-In accordance with Section 2 of GNU GPL v2 and Telegram API Policy:
-- **Proprietary Secrets Redacted:** This public repository intentionally **DOES NOT contain** production signing keystores (`.jks`), Google Cloud OAuth client secrets, Firebase private service accounts, or production API hashes.
-- **Developer Instructions:** Developers building this repository locally must obtain their own credentials from [https://my.telegram.org](https://my.telegram.org) and generate their own signing keys.
-
----
-
-## 🛠️ Building NayaGram-Client from Source
-
-### Prerequisites
-1. **Android Studio Ladybug | 2024.2.1** or newer
-2. **JDK 17** (Temurin or OpenJDK)
-3. **Android NDK** `27.2.12479018`
-4. **CMake** `3.22.1`
-
-### Build Steps
-1. Clone the repository:
+1. Clone the Telegram source code with its submodules:
    ```bash
-   git clone https://github.com/NayaGramPlatform/NayaGram-Client.git
-   cd NayaGram-Client
-   git checkout master
+   git clone --recursive --shallow-submodules https://github.com/DrKLO/Telegram.git Telegram
    ```
-
-2. Configure your API Credentials:
-   Open `TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java` and enter your credentials from [my.telegram.org](https://my.telegram.org):
-   ```java
-   public static int APP_ID = YOUR_APP_ID;
-   public static String APP_HASH = "YOUR_APP_HASH";
-   ```
-
-3. Build via Gradle:
+   In case you forgot the `--recursive` flag, change to the `Telegram` directory and run:
    ```bash
-   ./gradlew assembleAfatDebug
+   git submodule init && git submodule update --init --recursive --depth=1
    ```
+2. Copy your release.keystore into TMessagesProj/config
+3. Fill out RELEASE_KEY_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_STORE_PASSWORD in gradle.properties to access your  release.keystore
+4.  Go to https://console.firebase.google.com/, create two android apps with application IDs org.telegram.messenger and org.telegram.messenger.beta, turn on firebase messaging and download google-services.json, which should be copied to the same folder as TMessagesProj.
+5. Open the project in the Studio (note that it should be opened, NOT imported).
+6. Fill out values in TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java – there’s a link for each of the variables showing where and which data to obtain.
+7. You are ready to compile Telegram.
 
----
+### Localization
 
-## 🛡️ License
-
-This project is distributed under the **GNU General Public License v2.0 or later (GPL-2.0-or-later)**.  
-See the [LICENSE](LICENSE) file for full details.
-
-Copyright (c) 2013-2024 Telegram FZ-LLC  
-Copyright (c) 2026 NayaGram Platform (𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦™). All rights reserved.
+We moved all translations to https://translations.telegram.org/en/android/. Please use it.
