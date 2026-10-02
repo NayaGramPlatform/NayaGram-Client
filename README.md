@@ -1,7 +1,6 @@
 # 🚀 NayaGram Client (Official Open Source Distribution)
 
 > 📘 **Architecture & Pipeline Specification:** Detailed engineering pipeline, anti-delete engine specs, security isolation, and enterprise build architecture are fully documented in [**PLATFORM_PIPELINE.md**](./PLATFORM_PIPELINE.md).  
-> 🔒 **Enterprise Core Pipeline:** Maintained at [NayaGramPlatform/NayaGramAndroid](https://github.com/NayaGramPlatform/NayaGramAndroid) for private release signing, keystore governance, and production deployments.
 
 ---
 
