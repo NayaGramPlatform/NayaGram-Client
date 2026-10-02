@@ -39,6 +39,12 @@ import android.media.MediaCodecList;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
+import android.graphics.Typeface;
+
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -688,6 +694,14 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             items.add(UItem.asShadow(null));
         }
 
+        items.add(UItem.asHeader("NayaGram"));
+        items.add(SettingCell.Factory.of(100, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_features, "𝐍𝐆 𝐅𝐞𝐚𝐭𝐮𝐫𝐞", "All custom stealth, stories, privacy & tools", "\u2728"));
+        long currentClientUserId = UserConfig.getInstance(currentAccount).getClientUserId();
+        if (BuildVars.isNgStudioAllowed(currentClientUserId)) {
+            items.add(SettingCell.Factory.of(101, IconBackgroundColors.BLUE_DEEP.top, IconBackgroundColors.BLUE_DEEP.bottom, R.drawable.settings_devices, "NG Control", "Developer & Management", "00"));
+        }
+        items.add(UItem.asShadow(createNayaCopyrightSpan()));
+
         items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_account, getString(R.string.SettingsAccount), getString(R.string.SettingsAccountInfo)));
         items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
         items.add(SettingCell.Factory.of(3, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.SettingsPrivacySecurity), getString(R.string.SettingsPrivacySecurityInfo)));
@@ -809,6 +823,30 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             return;
         }
         switch (item.id) {
+            case 100:
+                presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_FEATURES_HUB));
+                break;
+            case 101:
+                presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_STUDIO));
+                break;
+            case 102:
+                presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_GHOST_MODE));
+                break;
+            case 103:
+                presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_ANTI_DELETE));
+                break;
+            case 104:
+                presentSettingFragment(new CacheControlActivity());
+                break;
+            case 105:
+                presentSettingFragment(new DialogsActivity(null));
+                break;
+            case 106:
+                presentSettingFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC));
+                break;
+            case 107:
+                presentSettingFragment(new DataUsageActivity());
+                break;
             case 1:
                 presentSettingFragment(new UserInfoActivity());
                 break;
@@ -914,6 +952,40 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         return false;
     }
 
+    
+    private CharSequence createNayaCopyrightSpan() {
+        int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+        SpannableStringBuilder ssb = new SpannableStringBuilder();
+
+        // Line 1: © {YEAR} 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦. All rights reserved.
+        int start = ssb.length();
+        ssb.append("© ").append(String.valueOf(currentYear)).append(" ");
+        ssb.setSpan(new ForegroundColorSpan(0xFF34C759), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        start = ssb.length();
+        ssb.append("𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 ");
+        ssb.setSpan(new ForegroundColorSpan(0xFF9B51E0), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        ssb.setSpan(new StyleSpan(Typeface.BOLD), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        start = ssb.length();
+        ssb.append("𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦");
+        ssb.setSpan(new ForegroundColorSpan(0xFF2F80ED), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        ssb.setSpan(new StyleSpan(Typeface.BOLD), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        start = ssb.length();
+        ssb.append(". All rights reserved.\n");
+        ssb.setSpan(new ForegroundColorSpan(0xFF34C759), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        // Line 2: Built with ❤️ in Bangladesh 🇧🇩
+        start = ssb.length();
+        ssb.append("Built with ❤️ in Bangladesh 🇧🇩");
+        ssb.setSpan(new ForegroundColorSpan(0xFF2F80ED), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        // Centered alignment
+        ssb.setSpan(new android.text.style.AlignmentSpan.Standard(android.text.Layout.Alignment.ALIGN_CENTER), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return ssb;
+    }
+
     public String getVersionName() {
         try {
             PackageInfo pInfo = ApplicationLoader.applicationContext.getPackageManager().getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
@@ -933,7 +1005,10 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                     }
                     break;
             }
-            return formatString(R.string.TelegramVersion, String.format(Locale.US, "v%s (%d)\n%s", pInfo.versionName, code, abi));
+            int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+            String nayaGramInfo = "NayaGram for Android v1.0.0 (1)";
+            String copyrightLine = "© " + currentYear + " 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦. All rights reserved.\nBuilt with ❤️ in Bangladesh 🇧🇩";
+            return nayaGramInfo + "\n" + copyrightLine + "\n" + abi;
         } catch (Exception e) {
             FileLog.e(e);
         }

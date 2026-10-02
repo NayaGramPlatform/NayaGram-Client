@@ -45,9 +45,9 @@ import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.StatsController;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
-import org.telegram.proxy.WebProxyConnectionTester;
-import org.telegram.proxy.WebProxyTransport;
-import org.telegram.proxy.ProxySettings;
+import org.telegram.utils.proxy.WebProxyConnectionTester;
+import org.telegram.utils.proxy.WebProxyTransport;
+import org.telegram.utils.proxy.ProxySettings;
 import org.telegram.ui.Components.VideoPlayer;
 import org.telegram.ui.LoginActivity;
 
@@ -942,6 +942,15 @@ public class ConnectionsManager extends BaseController {
 
     public static void onInternalPushReceived(final int currentAccount) {
         KeepAliveJob.startJob();
+    }
+
+    
+    public static void setProxySettings(boolean enabled, String address, int port, String username, String password, String secret) {
+        setProxySettings(enabled, new org.telegram.utils.proxy.ProxySettings(address, port, username, password, secret));
+    }
+
+    public long checkProxy(String address, int port, String username, String password, String secret, RequestTimeDelegate delegate) {
+        return checkProxy(new org.telegram.utils.proxy.ProxySettings(address, port, username, password, secret), delegate);
     }
 
     public static void setProxySettings(boolean enabled, ProxySettings settings) {
