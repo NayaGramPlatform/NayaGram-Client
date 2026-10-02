@@ -1,7 +1,6 @@
 # 🌟 NayaGram Architecture & Engineering Pipeline Documentation
 
 > **Official Blueprint for NayaGram Platform Ecosystem**  
-> **Core Repository Reference:** `NayaGramPlatform/NayaGramAndroid` (Enterprise & Core Build Matrix)  
 > **Client Distribution Showcase:** `NayaGramPlatform/NayaGram-Client` (Open Client Implementation)  
 > **Founder & Chief Architect:** Md Huzayfa  
 
@@ -13,7 +12,6 @@
 
 ভবিষ্যতের স্কেলেবিলিটি, আন্তর্জাতিক মানের কোড স্ট্যান্ডার্ড এবং ওপেন সোর্স কমিউনিটির শর্তাবলি (GPL v2/v3) পুরোপুরি মেনে চলার লক্ষ্যে পুরো প্ল্যাটফর্মকে দুটি প্রধান ভাগে বিভক্ত করা হয়েছে:
 
-1. **`NayaGramAndroid` (Private Enterprise Core):**  
    প্রোডাকশন গ্রেড বিল্ড সিস্টেম, সিক্রেট ক্রিপ্টোগ্রাফিক কি-স্টোর (`.jks`), প্রোপ্রাইটরি এআই লজিক এবং সরাসরি প্লে-স্টোর রিলিজ পাইপলাইনের জন্য নিয়োজিত মূল সুরক্ষিত ইঞ্জিন।
 2. **`NayaGram-Client` (Public Open Repository):**  
    টেলিগ্রাম রিভিউ টিম, ওপেন সোর্স অডিটর ও সারা বিশ্বের ডেভেলপার কমিউনিটির জন্য স্বচ্ছ, স্যানিটাইজড এবং সম্পূর্ণ উন্মুক্ত ক্লায়েন্ট সোর্স কোড।
@@ -30,7 +28,6 @@
         ┌────────────────────────┴────────────────────────┐
         ▼                                                 ▼
 ┌───────────────────────────────┐         ┌───────────────────────────────┐
-│     NayaGramAndroid (Core)    │         │     NayaGram-Client (Public)  │
 │  [🔒 Enterprise / Private]    │         │  [🌍 Open Source Showcase]    │
 ├───────────────────────────────┤         ├───────────────────────────────┤
 │ • Production Keystore (.jks)  │         │ • Clean Source Code           │
