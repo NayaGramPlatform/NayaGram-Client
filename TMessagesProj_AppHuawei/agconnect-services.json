@@ -28,19 +28,19 @@
 	"client":{
 		"cp_id":"890971000000000430",
 		"product_id":"9105385871708127577",
-		"client_id":"199221217075397696",
-		"client_secret":"1BA95A459EAFAD0B04A8F5138E5BE9533DAEF4CADCF49AAB67ABF6502D68BAC8",
+		"client_id":"YOUR_CLIENT_ID_HERE",
+		"client_secret":"YOUR_CLIENT_SECRET_HERE",
 		"project_id":"9105385871708127577",
-		"app_id":"101184875",
-		"api_key":"DAEDAEehEkTAPVhW2szdQNNLzBVS1Re7Pw98QkLMvgGZaEEUc8JLBVi2qhMh2vWw9h/Yq2PwtSGxZzFrSmLAQIysf7Tvo4BAadcblA==",
+		"app_id":"YOUR_APP_ID_HERE",
+		"api_key":"YOUR_API_KEY_HERE",
 		"package_name":"org.telegram.messenger"
 	},
 	"oauth_client":{
-		"client_id":"101184875",
+		"client_id":"YOUR_CLIENT_ID_HERE",
 		"client_type":1
 	},
 	"app_info":{
-		"app_id":"101184875",
+		"app_id":"YOUR_APP_ID_HERE",
 		"package_name":"org.telegram.messenger"
 	},
 	"service":{
@@ -77,15 +77,15 @@
 		{
 			"package_name":"org.telegram.messenger",
 			"client":{
-				"app_id":"101184875"
+				"app_id":"YOUR_APP_ID_HERE"
 			},
 			"app_info":{
 				"package_name":"org.telegram.messenger",
-				"app_id":"101184875"
+				"app_id":"YOUR_APP_ID_HERE"
 			},
 			"oauth_client":{
 				"client_type":1,
-				"client_id":"101184875"
+				"client_id":"YOUR_CLIENT_ID_HERE"
 			}
 		}
 	]

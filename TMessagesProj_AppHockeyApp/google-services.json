@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "598328469455",
-    "project_id": "nayagramplatform",
-    "storage_bucket": "nayagramplatform.firebasestorage.app"
+    "project_number": "000000000000",
+    "project_id": "nayagram-platform-public",
+    "storage_bucket": "nayagram-platform-public.appspot.com"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:598328469455:android:3b6e537da7b094f874d4ba",
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
         "android_client_info": {
           "package_name": "org.nayagram.platform"
         }
@@ -15,102 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDanxqPzyes1HAvwgdltWsEB7iHvs8oZ5E"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:598328469455:android:ef86d0e020343cc374d4ba",
-        "android_client_info": {
-          "package_name": "org.nayagram.platform.beta"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDanxqPzyes1HAvwgdltWsEB7iHvs8oZ5E"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:598328469455:android:04f331af3612496574d4ba",
-        "android_client_info": {
-          "package_name": "org.nayagram.platform.web"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDanxqPzyes1HAvwgdltWsEB7iHvs8oZ5E"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:598328469455:android:8633d249056c2b8674d4ba",
-        "android_client_info": {
-          "package_name": "org.telegram.messenger"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDanxqPzyes1HAvwgdltWsEB7iHvs8oZ5E"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:598328469455:android:ae4647071c7456ab74d4ba",
-        "android_client_info": {
-          "package_name": "org.telegram.messenger.beta"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDanxqPzyes1HAvwgdltWsEB7iHvs8oZ5E"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:598328469455:android:fc5f2d077b0d199374d4ba",
-        "android_client_info": {
-          "package_name": "org.telegram.messenger.web"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDanxqPzyes1HAvwgdltWsEB7iHvs8oZ5E"
+          "current_key": "YOUR_FIREBASE_API_KEY_HERE"
         }
       ],
       "services": {
