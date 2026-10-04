@@ -93,10 +93,10 @@ public class RLottieDrawable extends BitmapDrawable implements Animatable, Bitma
     protected volatile boolean nextFrameIsLast;
 
     private Runnable cacheGenerateTask;
-    protected Runnable loadFrameTask;
-    private volatile Bitmap renderingBitmap;
-    private volatile Bitmap nextRenderingBitmap;
-    private volatile Bitmap backgroundBitmap;
+    public Runnable loadFrameTask;
+    public volatile Bitmap renderingBitmap;
+    public volatile Bitmap nextRenderingBitmap;
+    public volatile Bitmap backgroundBitmap;
 
     protected boolean waitingForNextTask;
 
