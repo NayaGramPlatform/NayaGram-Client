@@ -4,6 +4,14 @@ plugins {
 
 gradlePlugin {
     plugins {
+        register("telegramBuildPlugin") {
+            id = "org.telegram.build-plugin"
+            implementationClass = "org.telegram.plugin.TelegramBuildPlugin"
+        }
+        register("telegramBuildAppPlugin") {
+            id = "org.telegram.build-app-plugin"
+            implementationClass = "org.telegram.plugin.TelegramBuildAppPlugin"
+        }
         register("lottieMetaPlugin") {
             id = "org.telegram.lottie-meta"
             implementationClass = "org.telegram.lottie.LottieMetaPlugin"
@@ -16,9 +24,10 @@ gradlePlugin {
 }
 
 repositories {
+    maven { url = uri("https://maven.aliyun.com/repository/public") }
     google()
-    mavenCentral()
     gradlePluginPortal()
+    mavenCentral()
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
