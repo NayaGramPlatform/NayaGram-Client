@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.telegram.build-app-plugin'
 
 repositories {
     mavenCentral()
@@ -26,7 +27,12 @@ android {
 
     defaultConfig.applicationId = APP_PACKAGE
 
-    sourceSets.main.jniLibs.srcDirs = ['../TMessagesProj/jni/']
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['../TMessagesProj/jni/']
+            assets.srcDirs = ['../TMessagesProj/src/main/assets']
+        }
+    }
 
     lintOptions {
         disable 'MissingTranslation'
@@ -46,7 +52,7 @@ android {
         localeFilters += ["zz"]
     }
 
-    def keystorePath = file("../release.keystore").exists() ? file("../release.keystore") : (file("../TMessagesProj/config/release.keystore").exists() ? file("../TMessagesProj/config/release.keystore") : file("../TMessagesProj/config/release.keystore"))
+    def keystorePath = file("../nayagrampro.jks").exists() ? file("../nayagrampro.jks") : (file("../TMessagesProj/config/nayagrampro.jks").exists() ? file("../TMessagesProj/config/nayagrampro.jks") : file("../TMessagesProj/config/release.keystore"))
     signingConfigs {
         debug {
             storeFile keystorePath
