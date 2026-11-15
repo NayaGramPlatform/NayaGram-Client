@@ -36,6 +36,7 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 
 import org.json.JSONObject;
+import org.telegram.messenger.utils.Choreographer60FpsContent;
 import org.telegram.messenger.voip.VideoCapturerDevice;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
@@ -212,9 +213,19 @@ public class ApplicationLoader extends Application {
                     }
 
                     boolean isSlow = isConnectionSlow();
+                    boolean autoReplyOn = false;
+                    try {
+                        autoReplyOn = AutoReplyManager.getInstance().isAutoReplyEnabled();
+                    } catch (Throwable ignored) {}
                     for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
                         ConnectionsManager.getInstance(a).checkConnection();
                         FileLoader.getInstance(a).onNetworkChanged(isSlow);
+                        if (autoReplyOn && UserConfig.getInstance(a).isClientActivated() && isNetworkOnlineFast()) {
+                            try {
+                                ConnectionsManager.getInstance(a).keepNetworkAliveInBackground();
+                                MessagesController.getInstance(a).getDifference();
+                            } catch (Throwable ignored) {}
+                        }
                     }
                 }
             };
@@ -356,9 +367,21 @@ public class ApplicationLoader extends Application {
 
         AndroidUtilities.runOnUIThread(ApplicationLoader::startPushService);
 
-        LauncherIconController.tryFixLauncherIconIfNeeded();
+        try {
+            LauncherIconController.tryFixLauncherIconIfNeeded();
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
         ProxyRotationController.init();
+
+        //if (BuildConfig.DEBUG_PRIVATE_VERSION) {
+        //    Choreographer60FpsContent.getInstance().addFrameCallback(debugEverySecondChecks, 1);
+        //}
     }
+
+    private final Runnable debugEverySecondChecks = () -> AndroidUtilities.runOnUIThread(() -> {
+        NotificationCenter.sanitize();
+    });
 
     public static void startPushService() {
         SharedPreferences preferences = MessagesController.getGlobalNotificationsSettings();
@@ -366,16 +389,41 @@ public class ApplicationLoader extends Application {
         if (preferences.contains("pushService")) {
             enabled = preferences.getBoolean("pushService", true);
         } else {
-            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", false);
+            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", true);
         }
+        boolean autoReplyEnabled = false;
+        try {
+            if (AutoReplyManager.getInstance().isAutoReplyEnabled()) {
+                enabled = true;
+                autoReplyEnabled = true;
+                AutoReplyManager.getInstance().ensureBackgroundKeepAlive();
+                AutoReplySyncWorker.schedule(applicationContext);
+            }
+        } catch (Throwable ignored) {}
         if (enabled) {
             try {
-                applicationContext.startService(new Intent(applicationContext, NotificationsService.class));
+                Intent serviceIntent = new Intent(applicationContext, NotificationsService.class);
+                if (autoReplyEnabled) {
+                    serviceIntent.putExtra(NotificationsService.EXTRA_START_FOREGROUND, true);
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        applicationContext.startForegroundService(serviceIntent);
+                    } else {
+                        applicationContext.startService(serviceIntent);
+                    }
+                } else {
+                    applicationContext.startService(serviceIntent);
+                }
             } catch (Throwable ignore) {
-
+                if (autoReplyEnabled) {
+                    try {
+                        KeepAliveJob.startJob();
+                    } catch (Throwable ignored) {}
+                }
             }
         } else {
-            applicationContext.stopService(new Intent(applicationContext, NotificationsService.class));
+            try {
+                applicationContext.stopService(new Intent(applicationContext, NotificationsService.class));
+            } catch (Throwable ignore) {}
         }
     }
 

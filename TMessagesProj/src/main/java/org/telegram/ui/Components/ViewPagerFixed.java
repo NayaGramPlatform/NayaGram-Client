@@ -222,6 +222,29 @@ public class ViewPagerFixed extends FrameLayout {
         if (page == currentPosition || (manualScrolling != null && nextPosition == page)) {
             return false;
         }
+        if (tabsAnimation != null) {
+            tabsAnimation.removeAllListeners();
+            tabsAnimation.cancel();
+            tabsAnimation = null;
+        }
+        if (tabsAnimationInProgress || startedTracking || maybeStartTracking) {
+            tabsAnimationInProgress = false;
+            startedTracking = false;
+            maybeStartTracking = false;
+            if (viewPages[0] != null) {
+                setTranslationX(viewPages[0], 0);
+            }
+            if (viewPages[1] != null) {
+                viewsByType.put(viewTypes[1], viewPages[1]);
+                removeView(viewPages[1]);
+                viewPages[1].setVisibility(View.GONE);
+                viewPages[1] = null;
+            }
+            if (tabsView != null) {
+                tabsView.setEnabled(true);
+            }
+            notificationsLocker.unlock();
+        }
         if (manualScrolling != null) {
             manualScrolling.cancel();
             manualScrolling = null;
@@ -1427,7 +1450,6 @@ public class ViewPagerFixed extends FrameLayout {
                 }
 
                 if (counterText != null || currentTab.id != Integer.MAX_VALUE && (isEditing || editingStartAnimationProgress != 0)) {
-                    textCounterPaint.setColor(Theme.getColor(backgroundColorKey, resourcesProvider));
                     if (Theme.hasThemeKey(unreadKey) && Theme.hasThemeKey(unreadOtherKey)) {
                         int color1 = Theme.getColor(unreadKey, resourcesProvider);
                         if ((animatingIndicator || manualScrollingToPosition != -1) && (currentTab.id == id1 || currentTab.id == id2)) {
@@ -1439,6 +1461,8 @@ public class ViewPagerFixed extends FrameLayout {
                     } else {
                         counterPaint.setColor(textPaint.getColor());
                     }
+                    textCounterPaint.setColor(ColorUtils.calculateLuminance(counterPaint.getColor()) > 0.55 ? 0xFF0F172A : 0xFFFFFFFF);
+                    textCounterPaint.setFakeBoldText(true);
 
                     int x = textX + currentTab.titleWidth + dp(6);
                     int countTop = (getMeasuredHeight() - dp(20)) / 2;
@@ -1598,8 +1622,10 @@ public class ViewPagerFixed extends FrameLayout {
             this.selectorType = tabsSelectorType;
             textCounterPaint.setTextSize(dp(13));
             textCounterPaint.setTypeface(AndroidUtilities.bold());
+            textCounterPaint.setFakeBoldText(true);
             textPaint.setTextSize(dp(tabsSelectorType == 9 || tabsSelectorType == 10 || tabsSelectorType == SELECTOR_TYPE_BUBBLE_STYLE ? 14 : 15));
             textPaint.setTypeface(AndroidUtilities.bold());
+            textPaint.setFakeBoldText(true);
             deletePaint.setStyle(Paint.Style.STROKE);
             deletePaint.setStrokeCap(Paint.Cap.ROUND);
             deletePaint.setStrokeWidth(dp(1.5f));

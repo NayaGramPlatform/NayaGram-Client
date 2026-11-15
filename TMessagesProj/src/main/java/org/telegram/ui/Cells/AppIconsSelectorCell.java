@@ -54,10 +54,12 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
     private List<LauncherIconController.LauncherIcon> availableIcons = new ArrayList<>();
     private LinearLayoutManager linearLayoutManager;
     private int currentAccount;
+    private BaseFragment fragment;
 
     public AppIconsSelectorCell(Context context, BaseFragment fragment, int currentAccount) {
         super(context);
         this.currentAccount = currentAccount;
+        this.fragment = fragment;
         setPadding(0, AndroidUtilities.dp(12), 0, AndroidUtilities.dp(12));
 
         setFocusable(false);
@@ -98,19 +100,25 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
                     outRect.right = AndroidUtilities.dp(18);
                 } else {
                     int itemCount = getAdapter().getItemCount();
-                    if (itemCount == 4) {
-                        outRect.right = (getWidth() - AndroidUtilities.dp(36) - AndroidUtilities.dp(58) * itemCount) / (itemCount - 1);
-                    } else {
-                        outRect.right = AndroidUtilities.dp(24);
-                    }
+                    int space = itemCount > 1 ? (getWidth() - AndroidUtilities.dp(36) - AndroidUtilities.dp(58) * itemCount) / (itemCount - 1) : AndroidUtilities.dp(24);
+                    outRect.right = Math.max(AndroidUtilities.dp(12), Math.min(AndroidUtilities.dp(24), space));
                 }
             }
         });
         setOnItemClickListener((view, position) -> {
             IconHolderView holderView = (IconHolderView) view;
             LauncherIconController.LauncherIcon icon = availableIcons.get(position);
-            if (icon.premium && !UserConfig.hasPremiumOnAccounts()) {
-                fragment.showDialog(new PremiumFeatureBottomSheet(fragment, PremiumPreviewFragment.PREMIUM_FEATURE_APPLICATION_ICONS, true));
+            // Crystal requires a real premium entitlement.
+            if (!LauncherIconController.isIconAvailable(icon)) {
+                return;
+            }
+
+            if (!LauncherIconController.canUseIcon(icon)) {
+                if (fragment != null) {
+                    fragment.showDialog(new PremiumFeatureBottomSheet(fragment, PremiumPreviewFragment.PREMIUM_FEATURE_APPLICATION_ICONS, false));
+                } else {
+                    android.widget.Toast.makeText(context, LocaleController.getString(R.string.UnlockPremiumIcons), android.widget.Toast.LENGTH_SHORT).show();
+                }
                 return;
             }
 
@@ -151,14 +159,8 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
     private void updateIconsVisibility() {
         availableIcons.clear();
         availableIcons.addAll(Arrays.asList(LauncherIconController.LauncherIcon.values()));
-        if (MessagesController.getInstance(currentAccount).premiumFeaturesBlocked()) {
-            for (int i = 0; i < availableIcons.size(); i++) {
-                if (availableIcons.get(i).premium) {
-                    availableIcons.remove(i);
-                    i--;
-                }
-            }
-        }
+        // TURBO is a legacy Neon alias; keep one visible Neon choice.
+        availableIcons.remove(LauncherIconController.LauncherIcon.PREMIUM);
         getAdapter().notifyDataSetChanged();
         invalidateItemDecorations();
 
@@ -275,7 +277,7 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
             iconView.setImageResource(icon.background);
 
             MarginLayoutParams params = (MarginLayoutParams) titleView.getLayoutParams();
-            if (icon.premium && !UserConfig.hasPremiumOnAccounts()) {
+            if (icon.premium && !LauncherIconController.hasIconPremium()) {
                 SpannableString str = new SpannableString("d " + LocaleController.getString(icon.title));
                 ColoredImageSpan span = new ColoredImageSpan(R.drawable.msg_mini_premiumlock);
                 span.setTopOffset(1);

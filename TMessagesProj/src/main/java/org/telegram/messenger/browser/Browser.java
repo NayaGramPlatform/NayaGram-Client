@@ -288,9 +288,71 @@ public class Browser {
         openUrl(context, uri, allowCustom, tryTelegraph, false, inCaseLoading, null, false, true, false);
     }
 
+    private static boolean ngLinkGuardPass;
+
+    private static boolean isTrustedExternalHost(String host) {
+        if (host == null) return true;
+        String h = host.toLowerCase(java.util.Locale.US);
+        return h.equals("t.me") || h.endsWith(".t.me")
+                || h.equals("telegram.me") || h.endsWith(".telegram.me")
+                || h.equals("telegram.org") || h.endsWith(".telegram.org")
+                || h.equals("telegram.dog") || h.endsWith(".telegram.dog")
+                || h.equals("telegra.ph") || h.endsWith(".telegra.ph")
+                || h.equals("fragment.com") || h.endsWith(".fragment.com")
+                || h.equals("nayagram.pro") || h.endsWith(".nayagram.pro");
+    }
+
     public static void openUrl(final Context context, Uri uri, boolean _allowCustom, boolean tryTelegraph, boolean forceNotInternalForApps, Progress inCaseLoading, String browser, boolean allowIntent, boolean allowInAppBrowser, boolean forceRequest) {
         if (context == null || uri == null) {
             return;
+        }
+        if (!ngLinkGuardPass) {
+            try {
+                String scheme = uri.getScheme();
+                boolean web = scheme != null && (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"));
+                boolean[] forceBrowser = new boolean[]{false};
+                boolean internal = isInternalUri(uri, forceBrowser);
+                if (web && !internal && !isTrustedExternalHost(uri.getHost())
+                        && org.nayagram.platform.NayaConfig.getInstance().isLinkGuardEnabled()
+                        && context instanceof Activity && !((Activity) context).isFinishing()) {
+                    final Context openContext = context;
+                    final Uri openUri = uri;
+                    final boolean allowCustomFinal = _allowCustom;
+                    final boolean tryTelegraphFinal = tryTelegraph;
+                    final boolean forceNotInternalFinal = forceNotInternalForApps;
+                    final Progress progressFinal = inCaseLoading;
+                    final String browserFinal = browser;
+                    final boolean allowIntentFinal = allowIntent;
+                    final boolean allowInAppFinal = allowInAppBrowser;
+                    final boolean forceRequestFinal = forceRequest;
+                    AndroidUtilities.runOnUIThread(() -> {
+                        try {
+                            new org.telegram.ui.ActionBar.AlertDialog.Builder(openContext)
+                                    .setTitle("Open this link?")
+                                    .setMessage(openUri.toString())
+                                    .setPositiveButton("Open", (dialog, which) -> {
+                                        ngLinkGuardPass = true;
+                                        try {
+                                            openUrl(openContext, openUri, allowCustomFinal, tryTelegraphFinal, forceNotInternalFinal, progressFinal, browserFinal, allowIntentFinal, allowInAppFinal, forceRequestFinal);
+                                        } finally {
+                                            ngLinkGuardPass = false;
+                                        }
+                                    })
+                                    .setNegativeButton("Cancel", null)
+                                    .show();
+                        } catch (Throwable ignored) {
+                            ngLinkGuardPass = true;
+                            try {
+                                openUrl(openContext, openUri, allowCustomFinal, tryTelegraphFinal, forceNotInternalFinal, progressFinal, browserFinal, allowIntentFinal, allowInAppFinal, forceRequestFinal);
+                            } finally {
+                                ngLinkGuardPass = false;
+                            }
+                        }
+                    });
+                    return;
+                }
+            } catch (Throwable ignored) {
+            }
         }
         final int currentAccount = UserConfig.selectedAccount;
         boolean[] forceBrowser = new boolean[]{false};
@@ -376,7 +438,7 @@ public class Browser {
                     .appendQueryParameter("autologin_token", autologin_token)
                     .build();
             }
-            if (allowCustom && !(uri != null && MessagesController.getInstance(currentAccount).isWebBrowserOpenInApp(uri.toString()) || isInstantViewOpen()) && MessagesController.getInstance(currentAccount).isWebBrowserUseCustomTabs() && !internalUri && !scheme.equals("tel") && !isTonsite(uri.toString())) {
+            if (allowCustom && !(uri != null && MessagesController.getInstance(currentAccount).isWebBrowserOpenInApp(uri.toString())) && MessagesController.getInstance(currentAccount).isWebBrowserUseCustomTabs() && !internalUri && !scheme.equals("tel") && !isTonsite(uri.toString())) {
                 if (forceBrowser[0] || !openInExternalApp(context, uri.toString(), false) || !hasAppToOpen(context, uri.toString())) {
                     if (MessagesController.getInstance(currentAccount).authDomains.contains(host)) {
                         Intent intent = new Intent(Intent.ACTION_VIEW, uri);
@@ -412,7 +474,7 @@ public class Browser {
 
             final boolean inappBrowser = (
                 allowInAppBrowser && BubbleActivity.instance == null &&
-                (uri != null && MessagesController.getInstance(currentAccount).isWebBrowserOpenInApp(uri.toString()) || isInstantViewOpen()) &&
+                uri != null && MessagesController.getInstance(currentAccount).isWebBrowserOpenInApp(uri.toString()) &&
                 TextUtils.isEmpty(browserPackage) &&
                 (uri.getScheme() == null || "https".equals(uri.getScheme()) || "http".equals(uri.getScheme()) || "tonsite".equals(uri.getScheme()))
                 ||
@@ -471,16 +533,6 @@ public class Browser {
         intent.putExtra(LaunchActivity.EXTRA_FORCE_REQUEST, forceRequest);
         activity.onNewIntent(intent, progress);
         return true;
-    }
-
-    public static boolean isInstantViewOpen() {
-        BaseFragment fragment = LaunchActivity.getSafeLastFragment();
-        if (fragment != null && fragment.getParentLayout() instanceof ActionBarLayout) {
-            BaseFragment sheetFragment = ((ActionBarLayout) fragment.getParentLayout()).getSheetFragment();
-            if (sheetFragment != null && sheetFragment.getArticleViewer() != null)
-                return true;
-        }
-        return fragment != null && fragment.getArticleViewer() != null;
     }
 
     public static boolean openInTelegramBrowser(Context context, String url, Browser.Progress progress) {

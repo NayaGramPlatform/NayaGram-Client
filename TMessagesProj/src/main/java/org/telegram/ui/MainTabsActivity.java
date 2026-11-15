@@ -37,6 +37,8 @@ import androidx.core.math.MathUtils;
 import androidx.core.view.WindowInsetsCompat;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.nayagram.platform.security.NGSafety;
+import org.nayagram.platform.security.NGSafetyActivity;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildConfig;
 import org.telegram.messenger.ContactsController;
@@ -80,6 +82,7 @@ import org.telegram.ui.Components.blur3.source.BlurredBackgroundSourceRenderNode
 import org.telegram.ui.Components.chat.ViewPositionWatcher;
 import org.telegram.ui.Components.glass.GlassTabView;
 import org.telegram.ui.Stories.recorder.HintView2;
+import org.telegram.ui.Wallet.WalletActivity;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -268,14 +271,35 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         updateLayout();
     }
 
+    private final Runnable preloadProfileRunnable = () -> {
+        if (!isFinishing() && getParentActivity() != null && viewPager != null && getParentLayout() != null) {
+            preloadPosition(POSITION_PROFILE);
+        }
+    };
+
     @Override
     public void onResume() {
         super.onResume();
+        if (getParentActivity() != null && !org.telegram.messenger.SharedConfig.isWaitingForPasscodeEnter && !NGSafety.isSessionVerified()) {
+            NGSafety.onAppForeground(getParentActivity());
+        }
+        if (getParentActivity() != null && NGSafety.isEnabled(getParentActivity()) && !NGSafety.isSessionVerified()) {
+            // Avoid stacking duplicate gates when returning from the authenticator app.
+            BaseFragment topFragment = getParentLayout() == null ? null : getParentLayout().getLastFragment();
+            if (!(topFragment instanceof NGSafetyActivity)) {
+                // The gate is app-local; Telegram OTP and two-step login remain untouched.
+                presentFragment(new NGSafetyActivity(true));
+            }
+        }
         blur3_updateColors();
         checkContactsTabBadge();
         checkUnreadCount(true);
 
         showAccountChangeHint();
+        if (contentView != null) {
+            contentView.removeCallbacks(preloadProfileRunnable);
+            contentView.postDelayed(preloadProfileRunnable, 250);
+        }
     }
 
     private void checkContactsTabBadge() {
@@ -295,6 +319,9 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
     @Override
     public void onPause() {
         super.onPause();
+        if (contentView != null) {
+            contentView.removeCallbacks(preloadProfileRunnable);
+        }
         if (accountSwitchHint != null) {
             accountSwitchHint.hide();
         }
@@ -331,10 +358,6 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
 
             final int position = indexToPosition(index);
             tabs[index].setOnClickListener(v -> {
-                if (viewPager.isManualScrolling() || viewPager.isTouch()) {
-                    return;
-                }
-
                 if (viewPager.getCurrentPosition() == position) {
                     final BaseFragment fragment = getCurrentVisibleFragment();
                     if (fragment instanceof MainTabsActivity.TabFragmentDelegate) {
@@ -605,7 +628,7 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
 
         accountNumbers.clear();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            if (UserConfig.getInstance(a).isClientActivated()) {
+            if (org.nayagram.platform.security.NGHiddenAccounts.isListed(a)) {
                 accountNumbers.add(a);
             }
         }
@@ -714,7 +737,7 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         final TextView textView = new TextView(getContext());
         textView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
         textView.setTextColor(getThemedColor(Theme.key_dialogTextBlack));
-        textView.setText(UserObject.getUserName(user));
+        textView.setText(org.nayagram.platform.security.NGHiddenAccounts.withHiddenMark(account, UserObject.getUserName(user)));
         textView.setMaxLines(2);
         textView.setEllipsize(TextUtils.TruncateAt.END);
         btn.addView(textView, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, Gravity.CENTER_VERTICAL, 13, 0, 14, 0));
@@ -735,9 +758,6 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
             if (currentPosition != POSITION_CALLS_OR_SETTINGS && dropCallsFragmentAfterPageScroll) {
                 dropFragmentAtPosition(POSITION_CALLS_OR_SETTINGS);
                 dropCallsFragmentAfterPageScroll = false;
-            }
-            if (currentPosition != POSITION_PROFILE) {
-                dropFragmentAtPosition(POSITION_PROFILE);
             }
             if (pendingFolderId != null && currentPosition == POSITION_CHATS && dialogsActivity != null) {
                 dialogsActivity.scrollToFolder(pendingFolderId);
@@ -760,7 +780,6 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         }
 
         checkUi_fadeView();
-        blur3_invalidateBlur();
         contentView.invalidate();
     }
 
@@ -1010,12 +1029,11 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
     }
 
     private NotificationCenter.ObserversGroup observersGroup;
-    private NotificationCenter.ObserversGroup globalObserversGroup;
-
 
     @Override
     public boolean onFragmentCreate() {
-        observersGroup = NotificationCenter.getInstance(currentAccount).createObserversGroup(this)
+        observersGroup = NotificationCenter.getInstance(currentAccount)
+            .createObserversGroup(this)
             .add(NotificationCenter.fileLoaded)
             .add(NotificationCenter.fileLoadProgressChanged)
             .add(NotificationCenter.fileLoadFailed)
@@ -1023,18 +1041,19 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
             .add(NotificationCenter.updateInterfaces)
             .add(NotificationCenter.callTabsVisibleToggled)
             .add(NotificationCenter.mainUserInfoChanged)
-            .add(NotificationCenter.contactsPermissionBadgeCheck);
-
-        globalObserversGroup = NotificationCenter.getGlobalInstance().createObserversGroup(this)
-            .add(NotificationCenter.appUpdateAvailable)
-            .add(NotificationCenter.appUpdateLoading)
-            .add(NotificationCenter.needSetDayNightTheme);
+            .add(NotificationCenter.contactsPermissionBadgeCheck)
+            .addGlobal(NotificationCenter.appUpdateAvailable)
+            .addGlobal(NotificationCenter.appUpdateLoading)
+            .addGlobal(NotificationCenter.needSetDayNightTheme);
 
         return super.onFragmentCreate();
     }
 
     @Override
     public void onFragmentDestroy() {
+        if (contentView != null) {
+            contentView.removeCallbacks(preloadProfileRunnable);
+        }
         Bulletin.removeDelegate(this);
         Bulletin.removeDelegate(contentView);
 
@@ -1042,10 +1061,7 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
             observersGroup.removeAllObservers();
             observersGroup = null;
         }
-        if (globalObserversGroup != null) {
-            globalObserversGroup.removeAllObservers();
-            globalObserversGroup = null;
-        }
+
         super.onFragmentDestroy();
     }
 
@@ -1085,8 +1101,8 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         final float scale = lerp(0.85f, 1f, factor);
 
         tabsViewWrapper.setTranslationY(lerp(hiddenY, normalY, factor));
-        tabsView.setClickable(factor > 1);
-        tabsView.setEnabled(factor > 1);
+        tabsView.setClickable(factor > 0.5f);
+        tabsView.setEnabled(factor > 0.5f);
         tabsView.setAlpha(factor);
         tabsView.setVisibility(factor > 0 ? View.VISIBLE : View.GONE);
     }

@@ -127,6 +127,33 @@ public final class BulletinFactory {
             b.show(top);
         }
     }
+    public void showForError(Throwable error) {
+        showForError(error, false);
+    }
+    public void showForError(Throwable error, boolean top) {
+        if (!LaunchActivity.isActive) return;
+        final String errorText = error == null ? "null" : error.getLocalizedMessage();
+        Bulletin b = createErrorBulletin(LocaleController.formatString(R.string.UnknownErrorCode, errorText));
+        b.hideAfterBottomSheet = false;
+        b.show(top);
+    }
+
+
+    public static void showError(String error) {
+        if (!LaunchActivity.isActive) return;
+        global().createErrorBulletin(LocaleController.formatString(R.string.UnknownErrorCode, error)).show();
+    }
+    public static void showError(String error, FrameLayout topContainer, Theme.ResourcesProvider resourcesProvider) {
+        if (!LaunchActivity.isActive) return;
+        if (topContainer == null) {
+            showError(error);
+            return;
+        }
+        Bulletin bulletin = of(topContainer, resourcesProvider)
+                .createErrorBulletin(LocaleController.formatString(R.string.UnknownErrorCode, error));
+        bulletin.hideAfterBottomSheet = false;
+        bulletin.show();
+    }
 
     public static void showError(TLRPC.TL_error error) {
         if (!LaunchActivity.isActive) return;
@@ -1023,8 +1050,11 @@ public final class BulletinFactory {
         if (!AndroidUtilities.shouldShowClipboardToast()) {
             return new Bulletin.EmptyBulletin();
         }
-        final Bulletin.LottieLayout layout = new Bulletin.LottieLayout(getContext(), null);
+        final Bulletin.LottieLayout layout = new Bulletin.LottieLayout(getContext(), resourcesProvider);
         layout.setAnimation(R.raw.copy, 36, 36, "NULL ROTATION", "Back", "Front");
+        layout.setBackground(Theme.createRoundRectDrawable(AndroidUtilities.dp(12), 0xFF0284C7));
+        layout.imageView.setColorFilter(new android.graphics.PorterDuffColorFilter(0xFF38BDF8, android.graphics.PorterDuff.Mode.SRC_IN));
+        layout.textView.setTextColor(0xFFFFFFFF);
         layout.textView.setText(message);
         return create(layout, Bulletin.DURATION_SHORT);
     }
@@ -1043,6 +1073,9 @@ public final class BulletinFactory {
         } else {
             final Bulletin.LottieLayout layout = new Bulletin.LottieLayout(getContext(), resourcesProvider);
             layout.setAnimation(R.raw.voip_invite, 36, 36, "Wibe", "Circle");
+            layout.setBackground(Theme.createRoundRectDrawable(AndroidUtilities.dp(12), 0xFF0284C7));
+            layout.imageView.setColorFilter(new android.graphics.PorterDuffColorFilter(0xFF38BDF8, android.graphics.PorterDuff.Mode.SRC_IN));
+            layout.textView.setTextColor(0xFFFFFFFF);
             layout.textView.setText(LocaleController.getString(R.string.LinkCopied));
             return create(layout, Bulletin.DURATION_SHORT);
         }
@@ -1055,6 +1088,9 @@ public final class BulletinFactory {
         }
         final Bulletin.LottieLayout layout = new Bulletin.LottieLayout(getContext(), resourcesProvider);
         layout.setAnimation(R.raw.voip_invite, 36, 36, "Wibe", "Circle");
+        layout.setBackground(Theme.createRoundRectDrawable(AndroidUtilities.dp(12), 0xFF0284C7));
+        layout.imageView.setColorFilter(new android.graphics.PorterDuffColorFilter(0xFF38BDF8, android.graphics.PorterDuff.Mode.SRC_IN));
+        layout.textView.setTextColor(0xFFFFFFFF);
         layout.textView.setText(text);
         return create(layout, Bulletin.DURATION_SHORT);
     }

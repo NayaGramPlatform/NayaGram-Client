@@ -88,6 +88,8 @@ public class ConnectionsManager extends BaseController {
     public final static int ConnectionTypeUpload = 4;
     public final static int ConnectionTypePush = 8;
     public final static int ConnectionTypeDownload2 = ConnectionTypeDownload | (1 << 16);
+    // Keep in sync with DOWNLOAD_CONNECTIONS_COUNT in tgnet/Defines.h.
+    public final static int DownloadConnectionsCount = 8;
 
     public final static int FileTypePhoto = 0x01000000;
     public final static int FileTypeVideo = 0x02000000;
@@ -105,6 +107,8 @@ public class ConnectionsManager extends BaseController {
     public final static int RequestFlagDoNotWaitFloodWait = 1024;
     public final static int RequestFlagListenAfterCancel = 2048;
     public final static int RequestFlagFailOnServerErrorsExceptFloodWait = 65536;
+    public final static int RequestFlagSmallDownload = 131072;
+    public final static int RequestFlagDownloadByteBudget = 262144;
 
     public final static int ConnectionStateConnecting = 1;
     public final static int ConnectionStateWaitingForNetwork = 2;
@@ -475,9 +479,19 @@ public class ConnectionsManager extends BaseController {
                     FileLog.e(e);
                 }
             }, onQuickAck, onWriteToSocket);
-            native_sendRequest(currentAccount, buffer.address, flags, datacenterId, connectionType, immediate, requestToken);
-        } catch (Exception e) {
-            FileLog.e(e);
+            int downloadSize = 0;
+            // Only FileLoadOperation opts in. Live call segments retain their existing scheduling.
+            if ((flags & RequestFlagDownloadByteBudget) != 0 && (connectionType & 0xffff) == ConnectionTypeDownload) {
+                if (object instanceof TLRPC.TL_upload_getFile) {
+                    downloadSize = ((TLRPC.TL_upload_getFile) object).limit;
+                } else if (object instanceof TLRPC.TL_upload_getWebFile) {
+                    downloadSize = ((TLRPC.TL_upload_getWebFile) object).limit;
+                } else if (object instanceof TLRPC.TL_upload_getCdnFile) {
+                    downloadSize = ((TLRPC.TL_upload_getCdnFile) object).limit;
+                }
+            }
+            native_sendRequest(currentAccount, buffer.address, flags, datacenterId, connectionType, immediate, requestToken, downloadSize);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -510,6 +524,7 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void onRequestClear(int currentAccount, int requestToken, boolean cancelled) {
+        try {
         ConnectionsManager connectionsManager = getInstance(currentAccount);
         if (connectionsManager == null) return;
         RequestCallbacks callbacks = connectionsManager.requestCallbacks.get(requestToken);
@@ -527,9 +542,12 @@ public class ConnectionsManager extends BaseController {
             connectionsManager.requestCallbacks.remove(requestToken);
 //            FileLog.d("{rc} onRequestClear(" + currentAccount + ", " + requestToken + ", " + cancelled + "): " + connectionsManager.requestCallbacks.size() + " requests' callbacks");
         }
+            } catch (Throwable ignored) {
+        }
     }
 
     public static void onRequestComplete(int currentAccount, int requestToken, long response, int errorCode, String errorText, int networkType, long timestamp, long requestMsgId, int dcId) {
+        try {
         ConnectionsManager connectionsManager = getInstance(currentAccount);
         if (connectionsManager == null) return;
         RequestCallbacks callbacks = connectionsManager.requestCallbacks.get(requestToken);
@@ -542,9 +560,12 @@ public class ConnectionsManager extends BaseController {
         } else {
 //            FileLog.d("{rc} onRequestComplete(" + currentAccount + ", " + requestToken + "): not found request " + requestToken + "! " + connectionsManager.requestCallbacks.size() + " requests' callbacks");
         }
+            } catch (Throwable ignored) {
+        }
     }
 
     public static void onRequestQuickAck(int currentAccount, int requestToken) {
+        try {
         ConnectionsManager connectionsManager = getInstance(currentAccount);
         if (connectionsManager == null) return;
         RequestCallbacks callbacks = connectionsManager.requestCallbacks.get(requestToken);
@@ -556,9 +577,12 @@ public class ConnectionsManager extends BaseController {
         } else {
 //            FileLog.d("{rc} onRequestQuickAck(" + currentAccount + ", " + requestToken + "): not found request " + requestToken + "! " + connectionsManager.requestCallbacks.size() + " requests' callbacks");
         }
+            } catch (Throwable ignored) {
+        }
     }
 
     public static void onRequestWriteToSocket(int currentAccount, int requestToken) {
+        try {
         ConnectionsManager connectionsManager = getInstance(currentAccount);
         if (connectionsManager == null) return;
         RequestCallbacks callbacks = connectionsManager.requestCallbacks.get(requestToken);
@@ -569,6 +593,8 @@ public class ConnectionsManager extends BaseController {
 //            FileLog.d("{rc} onRequestWriteToSocket(" + currentAccount + ", " + requestToken + "): found request " + requestToken + ", " + connectionsManager.requestCallbacks.size() + " requests' callbacks");
         } else {
 //            FileLog.d("{rc} onRequestWriteToSocket(" + currentAccount + ", " + requestToken + "): not found request " + requestToken + "! " + connectionsManager.requestCallbacks.size() + " requests' callbacks");
+        }
+            } catch (Throwable ignored) {
         }
     }
 
@@ -724,6 +750,10 @@ public class ConnectionsManager extends BaseController {
         native_resumeNetwork(currentAccount, true);
     }
 
+    public void keepNetworkAliveInBackground() {
+        native_resumeNetwork(currentAccount, false);
+    }
+
     public void updateDcSettings() {
         native_updateDcSettings(currentAccount);
     }
@@ -774,7 +804,11 @@ public class ConnectionsManager extends BaseController {
             if (lastPauseTime == 0) {
                 lastPauseTime = System.currentTimeMillis();
             }
-            native_pauseNetwork(currentAccount);
+            if (org.telegram.messenger.AutoReplyManager.getInstance().isAutoReplyEnabled()) {
+                native_resumeNetwork(currentAccount, false);
+            } else {
+                native_pauseNetwork(currentAccount);
+            }
         } else {
             if (appPaused) {
                 return;
@@ -790,15 +824,16 @@ public class ConnectionsManager extends BaseController {
         }
     }
 
+    @Keep
     public static void onUnparsedMessageReceived(long address, final int currentAccount, long messageId) {
         try {
             NativeByteBuffer buff = NativeByteBuffer.wrap(address);
             buff.setDataSourceType(TLDataSourceType.NETWORK);
             buff.reused = true;
             int constructor = buff.readInt32(true);
-            final TLObject message = TLClassStore.Instance().TLdeserialize(buff, constructor, true);
+            final TLRPC.Updates message = TLRPC.Updates.TLdeserialize(buff, constructor, true);
             FileLog.dumpUnparsedMessage(message, messageId, currentAccount);
-            if (message instanceof TLRPC.Updates) {
+            if (message != null) {
                 if (BuildVars.LOGS_ENABLED) {
                     FileLog.d("java received " + message);
                 }
@@ -809,37 +844,110 @@ public class ConnectionsManager extends BaseController {
                     FileLog.d(String.format("java received unknown constructor 0x%x", constructor));
                 }
             }
-        } catch (Exception e) {
-            FileLog.e(e);
+        } catch (Throwable ignored) {
         }
     }
 
+    private static final Runnable[] nativeUpdateRunnables = new Runnable[UserConfig.MAX_ACCOUNT_COUNT];
+    private static final Runnable[] nativeSessionRunnables = new Runnable[UserConfig.MAX_ACCOUNT_COUNT];
+    private static final int[] nativeConnectionState = new int[UserConfig.MAX_ACCOUNT_COUNT];
+    private static final Runnable[] nativeConnectionStateRunnables = new Runnable[UserConfig.MAX_ACCOUNT_COUNT];
+    static {
+        for (int i = 0; i < UserConfig.MAX_ACCOUNT_COUNT; i++) {
+            final int account = i;
+            nativeUpdateRunnables[i] = () -> {
+                try {
+                    MessagesController controller = AccountInstance.getInstance(account).getMessagesController();
+                    if (controller != null) {
+                        controller.updateTimerProc();
+                    }
+                } catch (Throwable ignored) {
+                }
+            };
+            nativeSessionRunnables[i] = () -> {
+                try {
+                    MessagesController controller = AccountInstance.getInstance(account).getMessagesController();
+                    if (controller != null) {
+                        controller.getDifference();
+                    }
+                } catch (Throwable ignored) {
+                }
+            };
+            nativeConnectionStateRunnables[i] = () -> {
+                try {
+                    int state = nativeConnectionState[account];
+                    ConnectionsManager manager = getInstance(account);
+                    if (manager == null) {
+                        return;
+                    }
+                    manager.connectionState = state;
+                    AccountInstance.getInstance(account).getNotificationCenter().postNotificationName(NotificationCenter.didUpdateConnectionState);
+                } catch (Throwable ignored) {
+                }
+            };
+        }
+    }
+
+    @Keep
     public static void onUpdate(final int currentAccount) {
-        Utilities.stageQueue.postRunnable(() -> AccountInstance.getInstance(currentAccount).getMessagesController().updateTimerProc());
-    }
-
-    public static void onSessionCreated(final int currentAccount) {
-        Utilities.stageQueue.postRunnable(() -> AccountInstance.getInstance(currentAccount).getMessagesController().getDifference());
-    }
-
-    public static void onConnectionStateChanged(final int state, final int currentAccount) {
-        AndroidUtilities.runOnUIThread(() -> {
-            getInstance(currentAccount).connectionState = state;
-            AccountInstance.getInstance(currentAccount).getNotificationCenter().postNotificationName(NotificationCenter.didUpdateConnectionState);
-        });
-    }
-
-    public static void onLogout(final int currentAccount) {
-        AndroidUtilities.runOnUIThread(() -> {
-            AccountInstance accountInstance = AccountInstance.getInstance(currentAccount);
-            if (accountInstance.getUserConfig().getClientUserId() != 0) {
-                accountInstance.getUserConfig().clearConfig();
-                accountInstance.getMessagesController().performLogout(0);
+        try {
+            if (Utilities.stageQueue == null || currentAccount < 0 || currentAccount >= nativeUpdateRunnables.length) {
+                return;
             }
-        });
+            Utilities.stageQueue.postRunnable(nativeUpdateRunnables[currentAccount]);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Keep
+    public static void onSessionCreated(final int currentAccount) {
+        try {
+            if (Utilities.stageQueue == null || currentAccount < 0 || currentAccount >= nativeSessionRunnables.length) {
+                return;
+            }
+            Utilities.stageQueue.postRunnable(nativeSessionRunnables[currentAccount]);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Keep
+    public static void onConnectionStateChanged(final int state, final int currentAccount) {
+        // Called on the tgnet pthread. Android 11 ART aborts with
+        // "top_shadow_frame_ != nullptr" if this method allocates a lambda
+        // (invokespecial of the lambda ctor / MterpInvokeDirect).
+        if (currentAccount < 0 || currentAccount >= nativeConnectionState.length) {
+            return;
+        }
+        nativeConnectionState[currentAccount] = state;
+        ConnectionsManager existing = Instance[currentAccount];
+        if (existing != null) {
+            existing.connectionState = state;
+        }
+        if (ApplicationLoader.applicationHandler == null) {
+            return;
+        }
+        ApplicationLoader.applicationHandler.post(nativeConnectionStateRunnables[currentAccount]);
+    }
+
+    @Keep
+    public static void onLogout(final int currentAccount) {
+        try {
+            AndroidUtilities.runOnUIThread(() -> {
+                try {
+                    AccountInstance accountInstance = AccountInstance.getInstance(currentAccount);
+                    if (accountInstance != null && accountInstance.getUserConfig().getClientUserId() != 0) {
+                        accountInstance.getUserConfig().clearConfig();
+                        accountInstance.getMessagesController().performLogout(0);
+                    }
+                } catch (Throwable ignored) {
+                }
+            });
+        } catch (Throwable ignored) {
+        }
     }
 
     public static int getInitFlags() {
+        try {
         int flags = 0;
         EmuDetector detector = EmuDetector.with(ApplicationLoader.applicationContext);
         if (detector.detect()) {
@@ -849,17 +957,20 @@ public class ConnectionsManager extends BaseController {
             flags |= 1024;
         }
         return flags;
+            } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     public static void onBytesSent(int amount, int networkType, final int currentAccount) {
         try {
             AccountInstance.getInstance(currentAccount).getStatsController().incrementSentBytesCount(networkType, StatsController.TYPE_TOTAL, amount);
-        } catch (Exception e) {
-            FileLog.e(e);
+        } catch (Throwable ignored) {
         }
     }
 
     public static void onRequestNewServerIpAndPort(final int second, final int currentAccount) {
+        try {
         Utilities.globalQueue.postRunnable(() -> {
             boolean networkOnline = ApplicationLoader.isNetworkOnline();
             Utilities.stageQueue.postRunnable(() -> {
@@ -890,14 +1001,41 @@ public class ConnectionsManager extends BaseController {
                 }
             });
         });
+            } catch (Throwable ignored) {
+        }
     }
 
     public static void onProxyError() {
+        try {
         AndroidUtilities.runOnUIThread(() -> NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.needShowAlert, 3));
+            } catch (Throwable ignored) {
+        }
     }
 
-    public static void getHostByName(String hostName, long address) {
-        AndroidUtilities.runOnUIThread(() -> {
+    private static final int HOST_RESOLVE_SLOTS = 32;
+    private static final String[] hostSlotName = new String[HOST_RESOLVE_SLOTS];
+    private static final long[] hostSlotAddress = new long[HOST_RESOLVE_SLOTS];
+    private static final Runnable[] hostSlotRunnable = new Runnable[HOST_RESOLVE_SLOTS];
+    private static int hostSlotCursor;
+    static {
+        for (int i = 0; i < HOST_RESOLVE_SLOTS; i++) {
+            final int slot = i;
+            hostSlotRunnable[i] = () -> resolveHostSlot(slot);
+        }
+    }
+
+    private static void resolveHostSlot(int slot) {
+        final String hostName;
+        final long address;
+        synchronized (hostSlotName) {
+            hostName = hostSlotName[slot];
+            address = hostSlotAddress[slot];
+            hostSlotName[slot] = null;
+        }
+        if (hostName == null) {
+            return;
+        }
+        try {
             ResolvedDomain resolvedDomain = dnsCache.get(hostName);
             if (resolvedDomain != null && SystemClock.elapsedRealtime() - resolvedDomain.ttl < 5 * 60 * 1000) {
                 native_onHostNameResolved(hostName, address, resolvedDomain.getAddress());
@@ -916,14 +1054,40 @@ public class ConnectionsManager extends BaseController {
                 }
                 task.addAddress(address);
             }
-        });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static void getHostByName(String hostName, long address) {
+        // Same Android 11 constraint as onConnectionStateChanged: no lambda here.
+        if (hostName == null || ApplicationLoader.applicationHandler == null) {
+            return;
+        }
+        int slot;
+        synchronized (hostSlotName) {
+            slot = -1;
+            for (int n = 0; n < HOST_RESOLVE_SLOTS; n++) {
+                int i = (hostSlotCursor + n) % HOST_RESOLVE_SLOTS;
+                if (hostSlotName[i] == null) {
+                    slot = i;
+                    hostSlotCursor = (i + 1) % HOST_RESOLVE_SLOTS;
+                    break;
+                }
+            }
+            if (slot < 0) {
+                slot = hostSlotCursor;
+                hostSlotCursor = (hostSlotCursor + 1) % HOST_RESOLVE_SLOTS;
+            }
+            hostSlotName[slot] = hostName;
+            hostSlotAddress[slot] = address;
+        }
+        ApplicationLoader.applicationHandler.post(hostSlotRunnable[slot]);
     }
 
     public static void onBytesReceived(int amount, int networkType, final int currentAccount) {
         try {
             StatsController.getInstance(currentAccount).incrementReceivedBytesCount(networkType, StatsController.TYPE_TOTAL, amount);
-        } catch (Exception e) {
-            FileLog.e(e);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -935,13 +1099,16 @@ public class ConnectionsManager extends BaseController {
             if (message != null) {
                 Utilities.stageQueue.postRunnable(() -> AccountInstance.getInstance(currentAccount).getMessagesController().updateConfig(message));
             }
-        } catch (Exception e) {
-            FileLog.e(e);
+        } catch (Throwable ignored) {
         }
     }
 
+    @Keep
     public static void onInternalPushReceived(final int currentAccount) {
-        KeepAliveJob.startJob();
+        try {
+            KeepAliveJob.startJob();
+        } catch (Throwable ignored) {
+        }
     }
 
     
@@ -1007,7 +1174,7 @@ public class ConnectionsManager extends BaseController {
     public static native int native_getCurrentDatacenterId(int currentAccount);
     public static native long native_getCurrentAuthKeyId(int currentAccount);
     public static native int native_getTimeDifference(int currentAccount);
-    public static native void native_sendRequest(int currentAccount, long object, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken);
+    public static native void native_sendRequest(int currentAccount, long object, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken, int downloadSize);
     public static native void native_cancelRequest(int currentAccount, int token, boolean notifyServer);
     public static native void native_cleanUp(int currentAccount, boolean resetKeys);
     public static native void native_cancelRequestsForGuid(int currentAccount, int guid);
@@ -1486,6 +1653,7 @@ public class ConnectionsManager extends BaseController {
     public static long lastPremiumFloodWaitShown = 0;
     @Keep
     public static void onPremiumFloodWait(final int currentAccount, final int requestToken, boolean isUpload) {
+        try {
         AndroidUtilities.runOnUIThread(() -> {
             if (UserConfig.selectedAccount != currentAccount) {
                 return;
@@ -1511,10 +1679,13 @@ public class ConnectionsManager extends BaseController {
                 }
             });
         });
+            } catch (Throwable ignored) {
+        }
     }
 
     @Keep
     public static void onIntegrityCheckClassic(final int currentAccount, final int requestToken, final String project, final String nonce) {
+        try {
         AndroidUtilities.runOnUIThread(() -> {
             long start = System.currentTimeMillis();
             FileLog.d("account"+currentAccount+": server requests integrity classic check with project = "+project+" nonce = " + nonce);
@@ -1550,11 +1721,16 @@ public class ConnectionsManager extends BaseController {
                     native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, "PLAYINTEGRITY_FAILED_EXCEPTION_" + LoginActivity.errorString(e));
                 });
         });
+            } catch (Throwable ignored) {
+        }
     }
 
     @Keep
     public static void onCaptchaCheck(final int currentAccount, final int requestToken, final String action, final String key_id) {
+        try {
         CaptchaController.request(currentAccount, requestToken, action, key_id);
+            } catch (Throwable ignored) {
+        }
     }
 
     public static native byte[] nativeTestGenerateClientHello(String domain);

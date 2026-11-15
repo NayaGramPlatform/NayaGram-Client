@@ -14,6 +14,7 @@ import android.graphics.PorterDuffColorFilter;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.SystemClock;
 import android.text.Layout;
 import android.text.Selection;
@@ -330,7 +331,11 @@ public class UndoView extends FrameLayout {
         textPaint.setColor(getThemedColor(Theme.key_undo_infoColor));
 
         setWillNotDraw(false);
-        backgroundDrawable = Theme.createRoundRectDrawable(AndroidUtilities.dp(10), getThemedColor(Theme.key_undo_background));
+        GradientDrawable gd = new GradientDrawable();
+        gd.setCornerRadius(AndroidUtilities.dp(10));
+        gd.setColor(0xFF0284C7);
+        gd.setStroke(AndroidUtilities.dp(1.5f), 0xFF38BDF8);
+        backgroundDrawable = gd;
 
         setOnTouchListener((v, event) -> true);
 
@@ -1749,6 +1754,15 @@ public class UndoView extends FrameLayout {
     }
 
     private int getThemedColor(int key) {
+        if (key == Theme.key_undo_background) {
+            return 0xFF0284C7;
+        }
+        if (key == Theme.key_undo_infoColor) {
+            return 0xFFFFFFFF;
+        }
+        if (key == Theme.key_undo_cancelColor) {
+            return 0xFF38BDF8;
+        }
         return Theme.getColor(key, resourcesProvider);
     }
 }

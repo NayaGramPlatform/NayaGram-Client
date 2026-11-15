@@ -133,7 +133,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         MessagesController.getGlobalMainSettings().edit().putLong("intro_crashed_time", System.currentTimeMillis()).apply();
 
         titles = new CharSequence[]{
-                null,
+                "NayaGram",
                 LocaleController.getString(R.string.Page2Title),
                 LocaleController.getString(R.string.Page3Title),
                 LocaleController.getString(R.string.Page5Title),
@@ -141,7 +141,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
                 LocaleController.getString(R.string.Page6Title)
         };
         messages = new String[]{
-                LocaleController.getString(R.string.Page1Message),
+                "More Privacy • More Control • A Smarter Chat",
                 LocaleController.getString(R.string.Page2Message),
                 LocaleController.getString(R.string.Page3Message),
                 LocaleController.getString(R.string.Page5Message),
@@ -153,11 +153,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
 
     @Override
     public View createView(Context context) {
-        logoDrawable = context.getResources().getDrawable(R.drawable.telegram_logo).mutate();
-        logoDrawable.setBounds(0, dp(8.666f), dp(115), dp(35));
-        SpannableStringBuilder ssb = new SpannableStringBuilder(LocaleController.getString(R.string.Page1Title));
-        ssb.setSpan(new ImageSpan(logoDrawable), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        titles[0] = ssb;
+        titles[0] = "NayaGram";
 
 
         actionBar.setAddToContainer(false);
@@ -203,7 +199,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         };
         scrollView.addView(frameContainerView, LayoutHelper.createScroll(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP));
 
-        darkThemeDrawable = new RLottieDrawable(R.raw.sun, String.valueOf(R.raw.sun), dp(28), dp(28), true, null);
+        darkThemeDrawable = new RLottieDrawable(R.raw.sun, dp(28), dp(28), true, null);
         darkThemeDrawable.setPlayInDirectionOfCustomEndFrame(true);
         darkThemeDrawable.beginApplyLayerColors();
         darkThemeDrawable.commitApplyLayerColors();
@@ -395,8 +391,17 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         switchLanguageTextView.setGravity(Gravity.CENTER);
         switchLanguageTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
         frameContainerView.addView(switchLanguageTextView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 30, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 20));
+        switchLanguageTextView.setText(LocaleController.getString("ContinueOnThisLanguage", R.string.ContinueOnThisLanguage));
+        switchLanguageTextView.setOnLongClickListener(v -> {
+            presentFragment(new LanguageSelectActivity());
+            return true;
+        });
         switchLanguageTextView.setOnClickListener(v -> {
-            if (startPressed || localeInfo == null) {
+            if (startPressed) {
+                return;
+            }
+            if (localeInfo == null) {
+                presentFragment(new LanguageSelectActivity());
                 return;
             }
             startPressed = true;
@@ -601,7 +606,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
 
             container.addView(frameLayout, 0);
 
-            headerTextView.setText(titles[position]);
+            headerTextView.setText(titles[position] != null ? titles[position] : "NayaGram");
             messageTextView.setText(AndroidUtilities.replaceTags(messages[position]));
 
             return frameLayout;
@@ -790,14 +795,20 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             loadTexture(R.drawable.intro_powerful_star, 18);
             loadTexture(R.drawable.intro_private_door, 19);
             loadTexture(R.drawable.intro_private_screw, 20);
-            loadTexture(R.drawable.intro_tg_plane, 21);
+            // Texture 21: transparent texture to replace the Telegram paper plane
+            loadTexture(v -> Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888), 21);
+            // Texture 22: NayaGram logo with safe circular margin
             loadTexture(v -> {
-                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-                paint.setColor(ThemeColors.TELEGRAM_COLOR); // It's logo color, it should not be colored by the theme
                 int size = dp(ICON_HEIGHT_DP);
                 Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
                 Canvas c = new Canvas(bm);
-                c.drawCircle(size / 2f, size / 2f, size / 2f, paint);
+                android.graphics.drawable.Drawable logo = org.telegram.messenger.ApplicationLoader.applicationContext != null ? 
+                        org.telegram.messenger.ApplicationLoader.applicationContext.getResources().getDrawable(R.drawable.nayagram_intro_logo) : null;
+                if (logo != null) {
+                    // Fits perfectly inside the 150dp sphere with zero offset, zero gap and no black stroke
+                    logo.setBounds(0, 0, size, size);
+                    logo.draw(c);
+                }
                 return bm;
             }, 22);
             loadTexture(telegramMaskProvider, 23);
@@ -962,7 +973,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
 
     private void updateColors(boolean fromTheme) {
         startMessagingButtonBackground.setColors(new int[]{getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButton2)});
-        logoDrawable.setColorFilter(Theme.multAlpha(getThemedColor(Theme.key_actionBarDefaultTitle), 0.9f), PorterDuff.Mode.MULTIPLY);
+        if (logoDrawable != null) { logoDrawable.setColorFilter(Theme.multAlpha(getThemedColor(Theme.key_actionBarDefaultTitle), 0.9f), PorterDuff.Mode.MULTIPLY); }
         fragmentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
         switchLanguageTextView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
         startMessagingButton.setTextColor(Theme.getColor(Theme.key_featuredStickers_buttonText));

@@ -112,8 +112,8 @@ public class ThemeColors {
         defaultColors[key_windowBackgroundWhiteBlueHeader] = TELEGRAM_COLOR_TEXT;
         defaultColors[key_windowBackgroundWhiteInputField] = 0xffdbdbdb;
         defaultColors[key_windowBackgroundWhiteInputFieldActivated] = TELEGRAM_COLOR;
-        defaultColors[key_switchTrack] = 0xffa6adb3;
-        defaultColors[key_switchTrackChecked] = TELEGRAM_COLOR;
+        defaultColors[key_switchTrack] = 0xff0284c7; // Blue for OFF state
+        defaultColors[key_switchTrackChecked] = 0xff10b981; // Green for ON state
         defaultColors[key_switchTrackBlue] = 0xff78828A;
         defaultColors[key_switchTrackBlueChecked] = 0xff1079C4;
         defaultColors[key_switchTrackBlueThumb] = 0xffffffff;
@@ -148,6 +148,9 @@ public class ThemeColors {
         defaultColors[key_fastScrollInactive] = 0xffc9cdd1;
         defaultColors[key_fastScrollText] = 0xffffffff;
         defaultColors[key_pollCreateIcons] = 0xff909599;
+        defaultColors[key_wallet_comment] = 0xfff5f5f5;
+        defaultColors[key_wallet_out_commentBorder] = 0xffd9d9d9;
+        defaultColors[key_wallet_inputCurrency] = 0xff219949;
 
         defaultColors[key_avatar_text] = 0xffffffff;
 
@@ -647,8 +650,8 @@ public class ThemeColors {
 
         defaultColors[key_chat_botSwitchToInlineText] = 0xff4391cc;
 
-        defaultColors[key_undo_background] = 0xea272f38;
-        defaultColors[key_undo_cancelColor] = 0xff85caff;
+        defaultColors[key_undo_background] = 0xff0284c7;
+        defaultColors[key_undo_cancelColor] = 0xff38bdf8;
         defaultColors[key_undo_infoColor] = 0xffffffff;
 
         defaultColors[key_chat_outTextSelectionHighlight] = 0x2E3F9923;
@@ -750,19 +753,19 @@ public class ThemeColors {
         defaultColors[key_voipgroup_disabledButtonActiveScrolled] = 0x8277A1FC;
         defaultColors[key_voipgroup_unmuteButton] = 0xff539EF8;
         defaultColors[key_voipgroup_unmuteButton2] = 0xff66D4FB;
-        defaultColors[key_voipgroup_actionBarUnscrolled] = 0xff191F26;
-        defaultColors[key_voipgroup_listViewBackgroundUnscrolled] = 0xff222A33;
+        defaultColors[key_voipgroup_actionBarUnscrolled] = 0xff1A1464;
+        defaultColors[key_voipgroup_listViewBackgroundUnscrolled] = 0xff1C2F55;
         defaultColors[key_voipgroup_lastSeenTextUnscrolled] = 0xff858D94;
         defaultColors[key_voipgroup_mutedIconUnscrolled] = 0xff7E868C;
-        defaultColors[key_voipgroup_actionBar] = 0xff0F1317;
+        defaultColors[key_voipgroup_actionBar] = 0xff140E3A;
         defaultColors[key_voipgroup_actionBarItems] = 0xffffffff;
         defaultColors[key_voipgroup_actionBarItemsSelector] = 0x1eBADBFF;
         defaultColors[key_voipgroup_mutedByAdminIcon] = 0xffFF7070;
         defaultColors[key_voipgroup_mutedIcon] = 0xff6F7980;
         defaultColors[key_voipgroup_lastSeenText] = 0xff79838A;
         defaultColors[key_voipgroup_nameText] = 0xffffffff;
-        defaultColors[key_voipgroup_listViewBackground] = 0xff1C2229;
-        defaultColors[key_voipgroup_dialogBackground] = 0xff1C2229;
+        defaultColors[key_voipgroup_listViewBackground] = 0xff1A2A4C;
+        defaultColors[key_voipgroup_dialogBackground] = 0xff162444;
         defaultColors[key_voipgroup_listeningText] = 0xff4DB8FF;
         defaultColors[key_voipgroup_speakingText] = 0xff77EE7D;
         defaultColors[key_voipgroup_listSelector] = 0x0effffff;
@@ -945,6 +948,9 @@ public class ThemeColors {
         colorKeysMap.put(key_windowBackgroundWhiteInputField, "windowBackgroundWhiteInputField");
         colorKeysMap.put(key_windowBackgroundWhiteInputFieldActivated, "windowBackgroundWhiteInputFieldActivated");
         colorKeysMap.put(key_pollCreateIcons, "pollCreateIcons");
+        colorKeysMap.put(key_wallet_comment, "wallet_comment");
+        colorKeysMap.put(key_wallet_out_commentBorder, "wallet_out_commentBorder");
+        colorKeysMap.put(key_wallet_inputCurrency, "wallet_inputCurrency");
         colorKeysMap.put(key_windowBackgroundWhiteGrayIcon, "windowBackgroundWhiteGrayIcon");
         colorKeysMap.put(key_windowBackgroundWhiteBlueText, "windowBackgroundWhiteBlueText");
         colorKeysMap.put(key_windowBackgroundWhiteBlueText2, "windowBackgroundWhiteBlueText2");

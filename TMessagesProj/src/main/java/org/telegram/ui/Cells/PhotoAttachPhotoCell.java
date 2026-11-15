@@ -601,6 +601,10 @@ public class PhotoAttachPhotoCell extends FrameLayout {
 
     public void setChecked(int num, boolean checked, boolean animated) {
         checkBox.setChecked(num, checked, animated);
+        if (checked && checkBox.getProgress() < 0.5f) {
+            checkBox.getCheckBoxBase().cancelCheckAnimator();
+            checkBox.getCheckBoxBase().setProgress(1.0f);
+        }
         if (itemSizeChanged) {
             if (animator != null) {
                 animator.cancel();

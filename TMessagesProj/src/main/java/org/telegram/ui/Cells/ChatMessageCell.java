@@ -39,7 +39,6 @@ import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.CornerPathEffect;
 import android.graphics.LinearGradient;
-import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
@@ -69,12 +68,13 @@ import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.CharacterStyle;
+import android.text.style.ForegroundColorSpan;
 import android.text.style.ClickableSpan;
 import android.text.style.DynamicDrawableSpan;
 import android.text.style.LeadingMarginSpan;
 import android.text.style.StrikethroughSpan;
+import android.text.style.StyleSpan;
 import android.text.style.URLSpan;
-import android.util.Log;
 import android.util.Pair;
 import android.util.Property;
 import android.util.SparseArray;
@@ -110,7 +110,7 @@ import org.telegram.messenger.BotForumHelper;
 import org.telegram.messenger.BotInlineKeyboard;
 import org.telegram.messenger.ChatMessageSharedResources;
 import org.telegram.messenger.ChatObject;
-import org.telegram.messenger.CodeHighlighting;
+import org.telegram.utils.code.highlight.CodeHighlighting;
 import org.telegram.messenger.ContactsController;
 import org.telegram.messenger.DialogObject;
 import org.telegram.messenger.DocumentObject;
@@ -6364,11 +6364,10 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.startSpoilers);
-        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.stopSpoilers);
-        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.emojiLoaded);
-        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.didUpdatePremiumGiftStickers);
-        NotificationCenter.getInstance(currentAccount).removeObserver(this, NotificationCenter.userInfoDidLoad);
+        if (observersGroup != null) {
+            observersGroup.removeAllObservers();
+            observersGroup = null;
+        }
 
         cancelShakeAnimation();
         if (checkBox != null) {
@@ -6467,15 +6466,24 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
         Choreographer60FpsContent.getInstance().removeFrameCallback(invalidateOutboundsRunnable);
     }
 
+    private NotificationCenter.ObserversGroup observersGroup;
+
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
 
-        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.startSpoilers);
-        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.stopSpoilers);
-        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.emojiLoaded);
-        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.didUpdatePremiumGiftStickers);
-        NotificationCenter.getInstance(currentAccount).addObserver(this, NotificationCenter.userInfoDidLoad);
+        if (observersGroup != null) {
+            observersGroup.removeAllObservers();
+            observersGroup = null;
+        }
+
+        observersGroup = NotificationCenter.getInstance(currentAccount)
+            .createObserversGroup(this)
+            .add(NotificationCenter.userInfoDidLoad)
+            .addGlobal(NotificationCenter.startSpoilers)
+            .addGlobal(NotificationCenter.stopSpoilers)
+            .addGlobal(NotificationCenter.emojiLoaded)
+            .addGlobal(NotificationCenter.didUpdatePremiumGiftStickers);
 
         if (currentMessageObject != null) {
             currentMessageObject.animateComments = false;
@@ -15359,7 +15367,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                 final float s = (1f - scale) * .7f;
                 canvas.scale(s, s, radialProgress.progressRect.centerX(), AndroidUtilities.lerp(radialProgress.progressRect.top, radialProgress.progressRect.bottom, .5f));
                 if (onceFire == null) {
-                    onceFire = new RLottieDrawable(R.raw.fire_once, "fire_once", dp(32), dp(32), true, null);
+                    onceFire = new RLottieDrawable(R.raw.fire_once, dp(32), dp(32), true, null);
                     onceFire.setMasterParent(this);
                     onceFire.setAllowDecodeSingleFrame(true);
                     onceFire.setAutoRepeat(1);
@@ -17264,7 +17272,11 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             return MediaActionDrawable.ICON_PLAY;
         } else {
             if (documentAttachType == DOCUMENT_ATTACH_TYPE_DOCUMENT && !drawPhotoImage) {
-                if (currentMessageObject.isOutOwner()) {
+                int msgDate = currentMessageObject != null && currentMessageObject.messageOwner != null ? currentMessageObject.messageOwner.date : 0;
+                if (currentMessageObject != null && !currentMessageObject.isOutOwner() && (org.nayagram.platform.NayaGram.shouldBlockDocument(documentAttach, msgDate) || org.nayagram.platform.NayaGram.shouldBlockFile(currentMessageObject.getDocumentName(), msgDate))) {
+                    radialProgress.setColors(0xFF00E5FF, 0xFF00B4D8, 0xFFE0F7FA, 0xFFFFFFFF);
+                    return MediaActionDrawable.ICON_EMPTY;
+                } else if (currentMessageObject.isOutOwner()) {
                     radialProgress.setColorKeys(Theme.key_chat_outLoader, Theme.key_chat_outLoaderSelected, Theme.key_chat_outMediaIcon, Theme.key_chat_outMediaIconSelected);
                 } else if (linkLine != null && hasLinkPreview) {
                     radialProgress.setColors(linkLine.getColor(), linkLine.getColor(), Theme.blendOver(0xffffffff, Theme.multAlpha(linkLine.getColor(), .01f)), Theme.blendOver(0xffffffff, Theme.multAlpha(linkLine.getColor(), .05f)));
@@ -17845,7 +17857,25 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
         }
     }
 
+    private long lastFrostEffectTime = 0;
+    public void playFrostBlockEffect() {
+        lastFrostEffectTime = System.currentTimeMillis();
+        invalidate();
+        try {
+            org.telegram.ui.Components.BulletinFactory.global().createSimpleBulletin(
+                    R.drawable.msg_fave,
+                    "❄️ File Blocked: Preserved safely in ice block"
+            ).show();
+        } catch (Throwable ignored) {
+        }
+    }
+
     private void didPressButton(boolean animated, boolean video) {
+        int msgDate = currentMessageObject != null && currentMessageObject.messageOwner != null ? currentMessageObject.messageOwner.date : 0;
+        if (currentMessageObject != null && !currentMessageObject.isOutOwner() && (org.nayagram.platform.NayaGram.shouldBlockDocument(documentAttach, msgDate) || org.nayagram.platform.NayaGram.shouldBlockFile(currentMessageObject.getDocumentName(), msgDate))) {
+            playFrostBlockEffect();
+            return;
+        }
         if (delegate != null && currentMessageObject.isSensitive() && currentMessageObject.hasMediaSpoilers() && !currentMessageObject.needDrawBluredPreview() && !currentMessageObject.isMediaSpoilersRevealed) {
             delegate.didPressRevealSensitiveContent(this);
             return;
@@ -18462,9 +18492,15 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
         } else if (currentMessageObject.isRepostPreview) {
             timeString = LocaleController.formatSmallDateChat(messageObject.messageOwner.date) + ", " + LocaleController.getInstance().getFormatterDay().format((long) (messageObject.messageOwner.date) * 1000);
         } else if (edited) {
-            timeString = AppGlobalConfig.getInstance(currentAccount).messagePrimaryEditedDate.get() ?
-                LocaleController.formatPmEditedDate(currentMessagesGroup != null ? currentMessagesGroup.getMaxEditDate() : messageObject.messageOwner.edit_date) :
-                (getString(R.string.EditedMessage) + " " + LocaleController.getInstance().getFormatterDay().format((long) (messageObject.messageOwner.date) * 1000));
+            if (AppGlobalConfig.getInstance(currentAccount).messagePrimaryEditedDate.get()) {
+                int editDate = currentMessagesGroup != null ? currentMessagesGroup.getMaxEditDate() : messageObject.messageOwner.edit_date;
+                if (editDate == 0 && currentMessageObject.isEditing()) {
+                    editDate = ConnectionsManager.getInstance(currentAccount).getCurrentTime();
+                }
+                timeString = LocaleController.formatPmEditedDate(editDate);
+            } else {
+                timeString = getString(R.string.EditedMessage) + " " + LocaleController.getInstance().getFormatterDay().format((long) (messageObject.messageOwner.date) * 1000);
+            }
         } else if (currentMessageObject.isSaved && currentMessageObject.messageOwner.fwd_from != null && (currentMessageObject.messageOwner.fwd_from.date != 0 || currentMessageObject.messageOwner.fwd_from.saved_date != 0)) {
             int date = currentMessageObject.messageOwner.fwd_from.saved_date;
             if (date == 0) {
@@ -18487,6 +18523,24 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             }
         } else {
             currentTimeString = timeString;
+        }
+        if (currentMessageObject != null && currentMessageObject.isAntiDeleted) {
+            SpannableStringBuilder deletedTag = new SpannableStringBuilder("DELETED  ");
+            deletedTag.setSpan(new ForegroundColorSpan(0xFF0EA5E9), 0, deletedTag.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            deletedTag.setSpan(new StyleSpan(Typeface.BOLD), 0, deletedTag.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            deletedTag.append(currentTimeString);
+            currentTimeString = deletedTag;
+        }
+        if (edited && currentMessageObject != null && org.nayagram.platform.NayaConfig.getInstance().isSaveEditHistoryEnabled()) {
+            MessageObject ngTargetMsg = org.nayagram.platform.history.NGMessageEditHistory.resolveHistoryTarget(currentAccount, currentMessageObject, currentMessagesGroup);
+            int ngEditCount = ngTargetMsg != null ? org.nayagram.platform.history.NGMessageEditHistory.getEditCount(currentAccount, ngTargetMsg.getDialogId(), ngTargetMsg.getId()) : 0;
+            if (ngEditCount > 0) {
+                SpannableStringBuilder editedTag = new SpannableStringBuilder("✎" + ngEditCount + " ");
+                editedTag.setSpan(new ForegroundColorSpan(0xFF10B981), 0, editedTag.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                editedTag.setSpan(new StyleSpan(Typeface.BOLD), 0, editedTag.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                editedTag.append(currentTimeString);
+                currentTimeString = editedTag;
+            }
         }
         if (currentMessageObject.isStakedDice()) {
             currentTimeString = TextUtils.concat("💎", StarsIntroActivity.formatTON(currentMessageObject.getStakedDiceAmount()), "  ", currentTimeString);
@@ -20047,7 +20101,11 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                 if (currentMessageObject.isOutOwner()) {
                     Theme.chat_timePaint.setColor(getThemedColor(isDrawSelectionBackground() ? Theme.key_chat_outTimeSelectedText : Theme.key_chat_outTimeText));
                 } else {
-                    Theme.chat_timePaint.setColor(getThemedColor(isDrawSelectionBackground() ? Theme.key_chat_inTimeSelectedText : Theme.key_chat_inTimeText));
+                    if (currentMessageObject.isAntiDeleted) {
+                        Theme.chat_timePaint.setColor(0xFF0284C7);
+                    } else {
+                        Theme.chat_timePaint.setColor(getThemedColor(isDrawSelectionBackground() ? Theme.key_chat_inTimeSelectedText : Theme.key_chat_inTimeText));
+                    }
                 }
             }
         }
@@ -21948,6 +22006,10 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             currentBackgroundDrawable.setBounds(left, top, right, bottom);
             currentBackgroundDrawable.drawCached(canvas, backgroundCacheParams);
             currentBackgroundDrawable.setAlpha(255);
+        }
+
+        if (currentMessageObject != null && currentMessageObject.messageOwner != null && org.nayagram.platform.NayaGram.shouldHide(currentMessageObject.messageOwner)) {
+            org.nayagram.platform.security.IceShieldRenderer.drawIceBlock(canvas, left, top, right, bottom, getAlpha());
         }
 
         animateCheckboxTranslation();
@@ -23956,7 +24018,11 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                 if (currentMessageObject.isOutOwner()) {
                     Theme.chat_timePaint.setColor(getThemedColor(drawSelectionBackground ? Theme.key_chat_outTimeSelectedText : Theme.key_chat_outTimeText));
                 } else {
-                    Theme.chat_timePaint.setColor(getThemedColor(drawSelectionBackground ? Theme.key_chat_inTimeSelectedText : Theme.key_chat_inTimeText));
+                    if (currentMessageObject.isAntiDeleted) {
+                        Theme.chat_timePaint.setColor(0xFF0284C7);
+                    } else {
+                        Theme.chat_timePaint.setColor(getThemedColor(drawSelectionBackground ? Theme.key_chat_inTimeSelectedText : Theme.key_chat_inTimeText));
+                    }
                 }
             }
         }
@@ -26415,6 +26481,58 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             radialProgress.iconScale *= mediaSpoilerRevealProgress;
         }
         radialProgress.draw(canvas);
+        int msgDateDraw = currentMessageObject != null && currentMessageObject.messageOwner != null ? currentMessageObject.messageOwner.date : 0;
+        if (currentMessageObject != null && !currentMessageObject.isOutOwner() && (org.nayagram.platform.NayaGram.shouldBlockDocument(documentAttach, msgDateDraw) || org.nayagram.platform.NayaGram.shouldBlockFile(currentMessageObject.getDocumentName(), msgDateDraw))) {
+            android.graphics.RectF pr = radialProgress.getProgressRect();
+            if (pr != null && pr.width() > 0) {
+                // Translucent Ice Block ("ব্লু সচ্ছল বরফের খন্ড")
+                float iceLeft = pr.left - dp(5);
+                float iceTop = pr.top - dp(5);
+                float iceRight = pr.right + dp(5);
+                float iceBottom = pr.bottom + dp(5);
+                android.graphics.RectF iceRect = new android.graphics.RectF(iceLeft, iceTop, iceRight, iceBottom);
+
+                // 1. Crystal translucent ice blue fill (0x3300E5FF) - inside is clear & visible
+                android.graphics.Paint iceFill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                iceFill.setStyle(android.graphics.Paint.Style.FILL);
+                iceFill.setColor(0x3300E5FF);
+                canvas.drawRoundRect(iceRect, dp(14), dp(14), iceFill);
+
+                // 2. Crystal ice stroke outline
+                android.graphics.Paint iceStroke = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                iceStroke.setStyle(android.graphics.Paint.Style.STROKE);
+                iceStroke.setStrokeWidth(dp(1.75f));
+                iceStroke.setColor(0xB380D8FF);
+                canvas.drawRoundRect(iceRect, dp(14), dp(14), iceStroke);
+
+                // 3. Top facet sheen reflection
+                android.graphics.Paint sheenPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                sheenPaint.setStyle(android.graphics.Paint.Style.STROKE);
+                sheenPaint.setStrokeWidth(dp(1.2f));
+                sheenPaint.setColor(0x80FFFFFF);
+                canvas.drawLine(iceLeft + dp(8), iceTop + dp(2), iceRight - dp(8), iceTop + dp(2), sheenPaint);
+
+                // 4. In-chat Ice Crack & Shimmer Pulse on click
+                long timeSinceFrostClick = System.currentTimeMillis() - lastFrostEffectTime;
+                if (timeSinceFrostClick < 800) {
+                    float progress = timeSinceFrostClick / 800.0f;
+                    float expand = dp(8) * progress;
+                    int alpha = (int) (180 * (1.0f - progress));
+                    android.graphics.Paint pulsePaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                    pulsePaint.setStyle(android.graphics.Paint.Style.STROKE);
+                    pulsePaint.setStrokeWidth(dp(2f));
+                    pulsePaint.setColor((alpha << 24) | 0x00E5FF);
+                    canvas.drawRoundRect(new android.graphics.RectF(iceLeft - expand, iceTop - expand, iceRight + expand, iceBottom + expand), dp(16), dp(16), pulsePaint);
+                    postInvalidateOnAnimation();
+                }
+
+                // 5. Sparkling Ice Crystal Star (❄)
+                android.graphics.Paint iceTextPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                iceTextPaint.setColor(0xFFE0F7FA);
+                iceTextPaint.setTextSize(dp(13));
+                canvas.drawText("❄", pr.centerX() + dp(12), pr.centerY() + dp(16), iceTextPaint);
+            }
+        }
 
         if (withPeriod) {
             canvas.save();

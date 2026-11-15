@@ -37,6 +37,10 @@ import androidx.annotation.Keep;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.nayagram.platform.monetization.AdMobIntegrationManager;
+import org.nayagram.platform.security.NGSafety;
+import org.nayagram.platform.security.NGSafetyActivity;
+import org.telegram.messenger.NayaGramAdsConfig;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BuildVars;
@@ -116,14 +120,17 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
     @Keep
     private int emailLoginRow;
     private int privacyShadowRow;
+    private int adPrivacyRow = -1;
     private int groupsRow;
     private int groupsDetailRow;
     private int securitySectionRow;
     @Keep
     private int passwordRow;
+    private int guardRow;
     private int sessionsRow;
     @Keep
     private int passcodeRow;
+    private int hiddenAccountsRow;
     @Keep
     private int autoDeleteMesages;
     @Keep
@@ -195,7 +202,6 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
 
         updateRows();
         loadPasswordSettings();
-        loadPasskeys();
 
         getNotificationCenter().addObserver(this, NotificationCenter.privacyRulesUpdated);
         getNotificationCenter().addObserver(this, NotificationCenter.blockedUsersDidLoad);
@@ -316,7 +322,9 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
             if (!view.isEnabled()) {
                 return;
             }
-            if (position == autoDeleteMesages) {
+            if (position == adPrivacyRow) {
+                AdMobIntegrationManager.getInstance().showPrivacyOptionsForm(getParentActivity());
+            } else if (position == autoDeleteMesages) {
                 if (getUserConfig().getGlobalTTl() >= 0) {
                     presentFragment(new AutoDeleteMessagesActivity());
                 }
@@ -487,15 +495,12 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                     }
                     presentFragment(new TwoStepVerificationSetupActivity(type, currentPassword));
                 }
-            } else if (position == passkeysRow) {
-                if (Build.VERSION.SDK_INT < 28 || !BuildVars.SUPPORTS_PASSKEYS) return;
-                if (currentPasskeys != null && currentPasskeys.size() > 0) {
-                    presentFragment(new PasskeysActivity(currentPasskeys));
-                } else {
-                    PasskeysActivity.showLearnSheet(context, currentAccount, resourceProvider, true);
-                }
+            } else if (position == guardRow) {
+                presentFragment(new NGSafetyActivity());
             } else if (position == passcodeRow) {
                 presentFragment(PasscodeActivity.determineOpenFragment());
+            } else if (position == hiddenAccountsRow) {
+                org.nayagram.platform.security.NGHiddenAccountsActivity.open(this);
             } else if (position == secretWebpageRow) {
                 if (getMessagesController().secretWebpagePreview == 1) {
                     getMessagesController().secretWebpagePreview = 0;
@@ -711,11 +716,10 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
 
         securitySectionRow = rowCount++;
         passwordRow = rowCount++;
+        guardRow = rowCount++;
         autoDeleteMesages = rowCount++;
         passcodeRow = rowCount++;
-        if (getMessagesController().config.settingsDisplayPasskeys.get() && Build.VERSION.SDK_INT >= 28 && BuildVars.SUPPORTS_PASSKEYS) {
-            passkeysRow = rowCount++;
-        }
+        hiddenAccountsRow = rowCount++;
         if (currentPassword != null ? currentPassword.login_email_pattern != null : SharedConfig.hasEmailLogin) {
             emailLoginRow = rowCount++;
         } else {
@@ -752,6 +756,7 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
         musicRow = rowCount++;
         groupsRow = rowCount++;
         privacyShadowRow = rowCount++;
+        adPrivacyRow = NayaGramAdsConfig.ENABLE_ADS ? rowCount++ : -1;
 
         if (getMessagesController().autoarchiveAvailable || getUserConfig().isPremium()) {
             newChatsHeaderRow = rowCount++;
@@ -1020,7 +1025,7 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
         @Override
         public boolean isEnabled(RecyclerView.ViewHolder holder) {
             int position = holder.getAdapterPosition();
-            return position == passcodeRow || position == passwordRow || position == passkeysRow || position == blockedRow || position == sessionsRow || position == secretWebpageRow || position == webSessionsRow ||
+            return position == passcodeRow || position == hiddenAccountsRow || position == passwordRow || position == guardRow || position == blockedRow || position == sessionsRow || position == secretWebpageRow || position == webSessionsRow ||
                     position == groupsRow && !getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_INVITE) ||
                     position == lastSeenRow && !getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_LASTSEEN) ||
                     position == callsRow && !getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_CALLS) ||
@@ -1037,7 +1042,8 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                     position == newChatsRow && !getContactsController().getLoadingGlobalSettings() ||
                     position == emailLoginRow || position == paymentsClearRow || position == secretMapRow ||
                     position == contactsSyncRow || position == passportRow || position == contactsDeleteRow ||
-                    position == contactsSuggestRow || position == autoDeleteMesages || position == botsBiometryRow;
+                    position == contactsSuggestRow || position == autoDeleteMesages || position == botsBiometryRow ||
+                    position == adPrivacyRow;
         }
 
         @Override
@@ -1181,7 +1187,7 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                         value = getString(feeValue ? R.string.ContactsAndFee : noncontactsValue ? R.string.ContactsAndPremium : R.string.P2PEverybody);
                         textCell.setTextAndValue(getMessagesController().newNoncontactPeersRequirePremiumWithoutOwnpremium && !getMessagesController().starsPaidMessagesAvailable ? getString(R.string.PrivacyMessages) : addPremiumStar(getString(R.string.PrivacyMessages)), value, musicRow != -1);
                     } else if (position == passportRow) {
-                        textCell.setText(getString("TelegramPassport", R.string.TelegramPassport), true);
+                        textCell.setText(getString("TelegramPassport", R.string.NayaGramPassport), true);
                     } else if (position == deleteAccountRow) {
                         if (getContactsController().getLoadingDeleteInfo()) {
                             showLoading = true;
@@ -1227,6 +1233,8 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                         secretMapUpdate = false;
                     } else if (position == contactsDeleteRow) {
                         textCell.setText(getString("SyncContactsDelete", R.string.SyncContactsDelete), true);
+                    } else if (position == adPrivacyRow) {
+                        textCell.setText("Advertising privacy choices", true);
                     }
                     textCell.setDrawLoading(showLoading, loadingLen, animated);
                     break;
@@ -1336,6 +1344,14 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                         }
                         textCell2.setPrioritizeTitleOverValue(true);
                         textCell2.setTextAndSpoilersValueAndIcon(getString(R.string.EmailLogin), val, R.drawable.msg2_email, true);
+                    } else if (position == guardRow) {
+                        boolean enabled = NGSafety.isEnabled(mContext);
+                        String guardStatus = enabled ? getString(R.string.PasswordOn) : getString(R.string.PasswordOff);
+                        textCell2.setTextAndValueAndIcon(getString(R.string.NayaGramGuardTitle), guardStatus, true, R.drawable.ic_nayagram_authenticator, true);
+                        if (textCell2.imageView != null) {
+                            textCell2.imageView.setColorFilter(null);
+                        }
+                        textCell2.setContentDescription(getString(R.string.NayaGramGuardTitle) + ", " + guardStatus);
                     } else if (position == passwordRow) {
                         value = "";
                         int icon = R.drawable.menu_2sv;
@@ -1348,18 +1364,6 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                             value = getString(R.string.PasswordOff);
                         }
                         textCell2.setTextAndValueAndIcon(getString(R.string.TwoStepVerification), value, true, icon, true);
-                    } else if (position == passkeysRow) {
-                        value = "";
-                        if (currentPasskeys == null) {
-                            showLoading = true;
-                        } else if (currentPasskeys.size() == 1 && textCell2.valueTextView.getPaint().measureText(currentPasskeys.get(0).name) < AndroidUtilities.displaySize.x / 3f) {
-                            value = currentPasskeys.get(0).name;
-                        } else if (currentPasskeys.size() > 0) {
-                            value = currentPasskeys.size() + "";
-                        } else {
-                            value = getString(R.string.PasswordOff);
-                        }
-                        textCell2.setTextAndValueAndIcon(getString(R.string.Passkey), value, true, R.drawable.msg2_permissions, true);
                     } else if (position == passcodeRow) {
                         int icon;
                         if (SharedConfig.passcodeHash.length() != 0) {
@@ -1370,6 +1374,9 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                             icon = R.drawable.msg2_secret;
                         }
                         textCell2.setTextAndValueAndIcon(getString(R.string.Passcode), value, true, icon, true);
+                    } else if (position == hiddenAccountsRow) {
+                        value = org.nayagram.platform.security.NGHiddenAccounts.hasCode() ? getString(R.string.PasswordOn) : getString(R.string.PasswordOff);
+                        textCell2.setTextAndValueAndIcon("Hidden accounts", value, true, R.drawable.msg_archive_hide, true);
                     } else if (position == blockedRow) {
                         int totalCount = getMessagesController().totalBlockedCount;
                         if (totalCount == 0) {
@@ -1391,7 +1398,7 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
         public int getItemViewType(int position) {
             if (position == passportRow || position == lastSeenRow || position == phoneNumberRow ||
                     position == deleteAccountRow || position == webSessionsRow || position == groupsRow || position == paymentsClearRow ||
-                    position == secretMapRow || position == contactsDeleteRow || position == botsBiometryRow) {
+                    position == secretMapRow || position == contactsDeleteRow || position == botsBiometryRow || position == adPrivacyRow) {
                 return 0;
             } else if (position == privacyShadowRow || position == deleteAccountDetailRow || position == groupsDetailRow || position == sessionsDetailRow || position == secretDetailRow || position == botsDetailRow || position == contactsDetailRow || position == newChatsSectionRow) {
                 return 1;
@@ -1401,7 +1408,7 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                 return 3;
             } else if (position == botsAndWebsitesShadowRow) {
                 return 4;
-            } else if (position == autoDeleteMesages || position == sessionsRow || position == emailLoginRow || position == passwordRow || position == passkeysRow || position == passcodeRow || position == blockedRow) {
+            } else if (position == autoDeleteMesages || position == sessionsRow || position == emailLoginRow || position == passwordRow || position == guardRow || position == passcodeRow || position == hiddenAccountsRow || position == blockedRow) {
                 return 5;
             }
             return 0;

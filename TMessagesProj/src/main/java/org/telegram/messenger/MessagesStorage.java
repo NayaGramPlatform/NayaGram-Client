@@ -24,6 +24,7 @@ import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
 import android.util.Pair;
 import android.util.SparseArray;
+import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 
 import androidx.annotation.UiThread;
@@ -107,6 +108,7 @@ public class MessagesStorage extends BaseController {
     private volatile int pendingMainUnreadCount;
     private volatile int pendingArchiveUnreadCount;
     private boolean databaseCreated;
+    private long restoredAntiDeleteVaultForUserId = 0;
 
     private final CountDownLatch openSync = new CountDownLatch(1);
 
@@ -118,7 +120,7 @@ public class MessagesStorage extends BaseController {
         }
     }
 
-    public final static int LAST_DB_VERSION = 178;
+    public final static int LAST_DB_VERSION = 179;
     private boolean databaseMigrationInProgress;
     public boolean showClearDatabaseAlert;
 
@@ -409,6 +411,7 @@ public class MessagesStorage extends BaseController {
         loadDialogFilters();
         loadUnreadMessages();
         loadPendingTasks();
+        ensureAntiDeleteVaultRestoredInternal();
         try {
             openSync.countDown();
         } catch (Throwable ignore) {
@@ -846,6 +849,7 @@ public class MessagesStorage extends BaseController {
 
         secretPBytes = null;
         secretG = 0;
+        restoredAntiDeleteVaultForUserId = 0;
     }
 
     public void cleanup(boolean isLogin) {
@@ -4520,6 +4524,9 @@ public class MessagesStorage extends BaseController {
                 database.executeFast("DELETE FROM messages_holes WHERE uid = " + did).stepThis().dispose();
                 database.executeFast("DELETE FROM media_holes_v2 WHERE uid = " + did).stepThis().dispose();
                 getMediaDataController().clearBotKeyboard(did);
+                if ((messagesOnly == 0 || messagesOnly == 1) && !DialogObject.isEncryptedDialog(did)) {
+                    org.nayagram.platform.history.NGAntiDeleteVault.deleteDialog(getUserConfig().getClientUserId(), did);
+                }
                 AndroidUtilities.runOnUIThread(() -> getNotificationCenter().postNotificationName(NotificationCenter.needReloadRecentDialogsSearch));
                 resetAllUnreadCounters(false);
                 updateWidgets(did);
@@ -5517,6 +5524,252 @@ public class MessagesStorage extends BaseController {
                 if (state != null) {
                     state.dispose();
                 }
+            }
+        });
+    }
+
+    private void captureEditHistoryBeforeOverwriteInternal(ArrayList<TLRPC.Message> messages) {
+        if (messages == null || messages.isEmpty() || database == null || !org.nayagram.platform.NayaConfig.getInstance().isSaveEditHistoryEnabled()) {
+            return;
+        }
+        LongSparseArray<ArrayList<TLRPC.Message>> byDialog = new LongSparseArray<>();
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            TLRPC.Message msg = messages.get(a);
+            if (msg == null || msg.id <= 0 || msg instanceof TLRPC.TL_messageEmpty) {
+                continue;
+            }
+            if ((msg.flags & TLRPC.MESSAGE_FLAG_EDITED) == 0 && msg.edit_date <= 0) {
+                continue;
+            }
+            long did = MessageObject.getDialogId(msg);
+            if (did == 0) {
+                continue;
+            }
+            ArrayList<TLRPC.Message> list = byDialog.get(did);
+            if (list == null) {
+                list = new ArrayList<>();
+                byDialog.put(did, list);
+            }
+            list.add(msg);
+        }
+        for (int a = 0, N = byDialog.size(); a < N; a++) {
+            long did = byDialog.keyAt(a);
+            ArrayList<TLRPC.Message> list = byDialog.valueAt(a);
+            ArrayList<Integer> mids = new ArrayList<>(list.size());
+            SparseArray<TLRPC.Message> incomingByMid = new SparseArray<>(list.size());
+            for (int b = 0; b < list.size(); b++) {
+                TLRPC.Message m = list.get(b);
+                mids.add(m.id);
+                incomingByMid.put(m.id, m);
+            }
+            String idsStr = TextUtils.join(",", mids);
+            SQLiteCursor cursor = null;
+            SparseBooleanArray recordedMids = new SparseBooleanArray();
+            try {
+                cursor = database.queryFinalized(String.format(Locale.US, "SELECT mid, data FROM messages_v2 WHERE uid = %d AND mid IN(%s)", did, idsStr));
+                while (cursor.next()) {
+                    int mid = cursor.intValue(0);
+                    recordedMids.put(mid, true);
+                    NativeByteBuffer data = cursor.byteBufferValue(1);
+                    if (data != null) {
+                        TLRPC.Message oldMsg = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
+                        if (oldMsg != null) {
+                            oldMsg.readAttachPath(data, getUserConfig().clientUserId);
+                        }
+                        data.reuse();
+                        TLRPC.Message newMsg = incomingByMid.get(mid);
+                        if (oldMsg != null && newMsg != null) {
+                            org.nayagram.platform.history.NGMessageEditHistory.recordEdit(currentAccount, did, oldMsg, newMsg);
+                        }
+                    }
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            } finally {
+                if (cursor != null) {
+                    cursor.dispose();
+                    cursor = null;
+                }
+            }
+            if (recordedMids.size() < mids.size()) {
+                try {
+                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT mid, data FROM messages_topics WHERE uid = %d AND mid IN(%s)", did, idsStr));
+                    while (cursor.next()) {
+                        int mid = cursor.intValue(0);
+                        if (recordedMids.get(mid)) {
+                            continue;
+                        }
+                        recordedMids.put(mid, true);
+                        NativeByteBuffer data = cursor.byteBufferValue(1);
+                        if (data != null) {
+                            TLRPC.Message oldMsg = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
+                            if (oldMsg != null) {
+                                oldMsg.readAttachPath(data, getUserConfig().clientUserId);
+                            }
+                            data.reuse();
+                            TLRPC.Message newMsg = incomingByMid.get(mid);
+                            if (oldMsg != null && newMsg != null) {
+                                org.nayagram.platform.history.NGMessageEditHistory.recordEdit(currentAccount, did, oldMsg, newMsg);
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    FileLog.e(e);
+                } finally {
+                    if (cursor != null) {
+                        cursor.dispose();
+                    }
+                }
+            }
+        }
+    }
+
+    private void preserveExistingAntiDeletedInternal(ArrayList<TLRPC.Message> messages) {
+        captureEditHistoryBeforeOverwriteInternal(messages);
+        if (messages == null || messages.isEmpty() || database == null || !org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled()) {
+            return;
+        }
+        LongSparseArray<ArrayList<TLRPC.Message>> byDialog = new LongSparseArray<>();
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            TLRPC.Message msg = messages.get(a);
+            if (msg == null || msg.id <= 0 || msg.isAntiDeleted || msg instanceof TLRPC.TL_messageEmpty) {
+                continue;
+            }
+            long did = MessageObject.getDialogId(msg);
+            if (did == 0) {
+                continue;
+            }
+            ArrayList<TLRPC.Message> list = byDialog.get(did);
+            if (list == null) {
+                list = new ArrayList<>();
+                byDialog.put(did, list);
+            }
+            list.add(msg);
+        }
+        for (int a = 0, N = byDialog.size(); a < N; a++) {
+            long did = byDialog.keyAt(a);
+            ArrayList<TLRPC.Message> list = byDialog.valueAt(a);
+            ArrayList<Integer> mids = new ArrayList<>(list.size());
+            for (int b = 0; b < list.size(); b++) {
+                mids.add(list.get(b).id);
+            }
+            String idsStr = TextUtils.join(",", mids);
+            SQLiteCursor cursor = null;
+            try {
+                SparseBooleanArray antiMids = new SparseBooleanArray();
+                cursor = database.queryFinalized(String.format(Locale.US, "SELECT mid, custom_params FROM messages_v2 WHERE uid = %d AND mid IN(%s) AND custom_params IS NOT NULL UNION SELECT mid, custom_params FROM messages_topics WHERE uid = %d AND mid IN(%s) AND custom_params IS NOT NULL", did, idsStr, did, idsStr));
+                while (cursor.next()) {
+                    NativeByteBuffer params = cursor.byteBufferValue(1);
+                    if (params != null) {
+                        TLRPC.TL_message tmp = new TLRPC.TL_message();
+                        MessageCustomParamsHelper.readLocalParams(tmp, params);
+                        params.reuse();
+                        if (tmp.isAntiDeleted) {
+                            antiMids.put(cursor.intValue(0), true);
+                        }
+                    }
+                }
+                if (antiMids.size() > 0) {
+                    for (int b = 0; b < list.size(); b++) {
+                        TLRPC.Message msg = list.get(b);
+                        if (antiMids.get(msg.id)) {
+                            msg.isAntiDeleted = true;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            } finally {
+                if (cursor != null) {
+                    cursor.dispose();
+                }
+            }
+        }
+    }
+
+    public void updateMessageAntiDeleted(long dialogId, int msgId, TLRPC.Message saveFromMessage) {
+        storageQueue.postRunnable(() -> {
+            SQLitePreparedStatement state = null;
+            try {
+                database.beginTransaction();
+                TLRPC.Message message = getMessageWithCustomParamsOnlyInternal(msgId, dialogId);
+                if (message != null) {
+                    message.isAntiDeleted = true;
+                    if (saveFromMessage != null) {
+                        saveFromMessage.isAntiDeleted = true;
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        if (i == 0) {
+                            state = database.executeFast("UPDATE messages_v2 SET custom_params = ? WHERE mid = ? AND uid = ?");
+                        } else {
+                            state = database.executeFast("UPDATE messages_topics SET custom_params = ? WHERE mid = ? AND uid = ?");
+                        }
+                        state.requery();
+                        NativeByteBuffer nativeByteBuffer = MessageCustomParamsHelper.writeLocalParams(message);
+                        if (nativeByteBuffer != null) {
+                            state.bindByteBuffer(1, nativeByteBuffer);
+                        } else {
+                            state.bindNull(1);
+                        }
+                        state.bindInteger(2, msgId);
+                        state.bindLong(3, dialogId);
+                        state.step();
+                        state.dispose();
+                        state = null;
+                        if (nativeByteBuffer != null) {
+                            nativeByteBuffer.reuse();
+                        }
+                    }
+                    org.nayagram.platform.history.NGAntiDeleteVault.saveFromMainDb(getUserConfig().getClientUserId(), database, dialogId, msgId);
+                }
+                database.commitTransaction();
+            } catch (Exception e) {
+                checkSQLException(e);
+            } finally {
+                if (database != null) {
+                    database.commitTransaction();
+                }
+                if (state != null) {
+                    state.dispose();
+                }
+            }
+        });
+    }
+
+    private void ensureAntiDeleteVaultRestoredInternal() {
+        if (database == null) {
+            return;
+        }
+        long uid = getUserConfig().getClientUserId();
+        if (uid == 0 || restoredAntiDeleteVaultForUserId == uid) {
+            return;
+        }
+        restoredAntiDeleteVaultForUserId = uid;
+        if (org.nayagram.platform.history.NGAntiDeleteVault.hasVaultForUser(uid)) {
+            org.nayagram.platform.history.NGAntiDeleteVault.restoreIntoMainDb(uid, database);
+        }
+    }
+
+    public void backupAntiDeleteBeforeLogout(final long ownerUserId) {
+        if (ownerUserId == 0) {
+            return;
+        }
+        storageQueue.postRunnable(() -> {
+            if (database != null) {
+                org.nayagram.platform.history.NGAntiDeleteVault.backupAllBeforeLogout(ownerUserId, database);
+            }
+        });
+    }
+
+    public void deleteMessagesFromAntiDeleteVault(final long dialogId, final ArrayList<Integer> mids) {
+        if (dialogId == 0 || mids == null || mids.isEmpty() || DialogObject.isEncryptedDialog(dialogId)) {
+            return;
+        }
+        final ArrayList<Integer> copy = new ArrayList<>(mids);
+        storageQueue.postRunnable(() -> {
+            long uid = getUserConfig().getClientUserId();
+            if (uid != 0) {
+                org.nayagram.platform.history.NGAntiDeleteVault.deleteMessages(uid, dialogId, copy);
             }
         });
     }
@@ -8919,6 +9172,7 @@ public class MessagesStorage extends BaseController {
         final boolean quickReplies = mode == ChatActivity.MODE_QUICK_REPLIES;
         final boolean welcomeMessages = mode == ChatActivity.MODE_WELCOME_MESSAGES;
         try {
+            ensureAntiDeleteVaultRestoredInternal();
             ArrayList<Long> usersToLoad = new ArrayList<>();
             ArrayList<Long> chatsToLoad = new ArrayList<>();
             ArrayList<Long> animatedEmojiToLoad = new ArrayList<>();
@@ -11420,6 +11674,68 @@ public class MessagesStorage extends BaseController {
                 cursor.dispose();
                 cursor = null;
 
+                boolean antiDeleteChannel = org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled();
+                ArrayList<TLRPC.Message> preservedChannelMessages = null;
+                if (antiDeleteChannel) {
+                    SparseBooleanArray incomingMids = new SparseBooleanArray();
+                    int minDiffMid = Integer.MAX_VALUE;
+                    if (difference.messages != null) {
+                        for (int a = 0; a < difference.messages.size(); a++) {
+                            TLRPC.Message m = difference.messages.get(a);
+                            if (m != null && m.id > 0) {
+                                incomingMids.put(m.id, true);
+                                if (m.id < minDiffMid) {
+                                    minDiffMid = m.id;
+                                }
+                            }
+                        }
+                    }
+                    SQLiteCursor prevCur = null;
+                    try {
+                        prevCur = database.queryFinalized(String.format(Locale.US, "SELECT mid, data, custom_params FROM messages_v2 WHERE uid = %d AND mid > 0 ORDER BY mid DESC LIMIT 500", did));
+                        while (prevCur.next()) {
+                            int mid = prevCur.intValue(0);
+                            if (incomingMids.get(mid) || getMessagesController().isLocallyDeleted(did, mid)) {
+                                continue;
+                            }
+                            NativeByteBuffer data = prevCur.byteBufferValue(1);
+                            if (data != null) {
+                                TLRPC.Message oldMsg = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
+                                if (oldMsg != null) {
+                                    oldMsg.readAttachPath(data, getUserConfig().clientUserId);
+                                }
+                                data.reuse();
+                                NativeByteBuffer params = prevCur.byteBufferValue(2);
+                                if (params != null) {
+                                    if (oldMsg != null) {
+                                        MessageCustomParamsHelper.readLocalParams(oldMsg, params);
+                                    }
+                                    params.reuse();
+                                }
+                                if (oldMsg != null && oldMsg.id > 0) {
+                                    oldMsg.dialog_id = did;
+                                    boolean inReplacedRange = (minDiffMid == Integer.MAX_VALUE) || (oldMsg.id >= minDiffMid);
+                                    if (!oldMsg.isAntiDeleted && inReplacedRange && (!oldMsg.out || oldMsg.post)) {
+                                        oldMsg.isAntiDeleted = true;
+                                    }
+                                    if (oldMsg.isAntiDeleted || oldMsg.id < minDiffMid) {
+                                        if (preservedChannelMessages == null) {
+                                            preservedChannelMessages = new ArrayList<>();
+                                        }
+                                        preservedChannelMessages.add(oldMsg);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        FileLog.e(e);
+                    } finally {
+                        if (prevCur != null) {
+                            prevCur.dispose();
+                        }
+                    }
+                }
+
                 database.executeFast("DELETE FROM chat_pinned_count WHERE uid = " + did).stepThis().dispose();
                 database.executeFast("DELETE FROM chat_pinned_v2 WHERE uid = " + did).stepThis().dispose();
                 database.executeFast("DELETE FROM messages_v2 WHERE uid = " + did).stepThis().dispose();
@@ -11451,6 +11767,10 @@ public class MessagesStorage extends BaseController {
                 dialog.pinnedNum = pinned;
                 dialogs.dialogs.add(dialog);
                 putDialogsInternal(dialogs, 0);
+
+                if (preservedChannelMessages != null && !preservedChannelMessages.isEmpty()) {
+                    putMessagesInternal(preservedChannelMessages, true, true, 0, true, ChatActivity.MODE_DEFAULT, 0);
+                }
 
                 updateDialogsWithDeletedMessages(-channelId, channelId, new ArrayList<>(), null);
                 AndroidUtilities.runOnUIThread(() -> getNotificationCenter().postNotificationName(NotificationCenter.removeAllMessagesFromDialog, did, true, difference));
@@ -12180,6 +12500,7 @@ public class MessagesStorage extends BaseController {
                 state_polls = null;
                 state_tasks = null;
                 int minDeleteTime = Integer.MAX_VALUE;
+                preserveExistingAntiDeletedInternal(messages);
 
                 for (int a = 0; a < messages.size(); a++) {
                     TLRPC.Message message = messages.get(a);
@@ -14643,7 +14964,9 @@ public class MessagesStorage extends BaseController {
                             }
                             data.reuse();
                             if (DialogObject.isEncryptedDialog(did) || deleteFiles) {
-                                addFilesToDelete(message, filesToDelete, idsToDelete, namesToDelete, false);
+                                if (!org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled() || (message.out && !message.post) || getMessagesController().isLocallyDeleted(did, message.id)) {
+                                    addFilesToDelete(message, filesToDelete, idsToDelete, namesToDelete, false);
+                                }
                             }
 
                             if (did == currentUser) {
@@ -14678,13 +15001,23 @@ public class MessagesStorage extends BaseController {
                         int mid = cursor.intValue(5);
                         long topicId = 0;
                         unknownMessagesInTopics.remove((Integer) mid);
+                        ArrayList<Integer> tmids = messagesByDialogs.get(did);
+                        if (tmids == null) {
+                            tmids = new ArrayList<>();
+                            messagesByDialogs.put(did, tmids);
+                        }
+                        if (!tmids.contains(mid)) {
+                            tmids.add(mid);
+                        }
 
                         NativeByteBuffer data = cursor.byteBufferValue(1);
                         if (data != null) {
                             TLRPC.Message message = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
                             message.readAttachPath(data, getUserConfig().clientUserId);
                             data.reuse();
-                            addFilesToDelete(message, filesToDelete, idsToDelete, namesToDelete, false);
+                            if (!org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled() || (message.out && !message.post) || getMessagesController().isLocallyDeleted(did, message.id)) {
+                                addFilesToDelete(message, filesToDelete, idsToDelete, namesToDelete, false);
+                            }
                             if (message.action instanceof TLRPC.TL_messageActionTopicCreate) {
                                 if (topicsToDelete == null) {
                                     topicsToDelete = new ArrayList<>();
@@ -14720,44 +15053,82 @@ public class MessagesStorage extends BaseController {
                 cursor = null;
 
                 database.beginTransaction();
-                for (int i = 0; i < 5; i++) {
-                    if (i == 0) {
-                        if (dialogId != 0) {
-                            state = getMessagesStorage().getDatabase().executeFast("UPDATE messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?) AND uid = ?");
-                        } else {
-                            state = getMessagesStorage().getDatabase().executeFast("UPDATE messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?) AND is_channel = 0");
+                String replyDeleteIds = ids;
+                if (org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled()) {
+                    ArrayList<Integer> replyIdsList = new ArrayList<>();
+                    SQLiteCursor rCur = null;
+                    try {
+                        String q = dialogId != 0
+                                ? String.format(Locale.US, "SELECT mid, uid, out, data FROM messages_v2 WHERE mid IN(%s) AND uid = %d UNION SELECT mid, uid, out, data FROM messages_topics WHERE mid IN(%s) AND uid = %d", ids, dialogId, ids, dialogId)
+                                : String.format(Locale.US, "SELECT mid, uid, out, data FROM messages_v2 WHERE mid IN(%s) AND is_channel = 0", ids);
+                        rCur = database.queryFinalized(q);
+                        while (rCur.next()) {
+                            int rmid = rCur.intValue(0);
+                            long ruid = rCur.longValue(1);
+                            int rout = rCur.intValue(2);
+                            boolean isChannelPost = false;
+                            if (rout == 1 && ruid < 0) {
+                                NativeByteBuffer rData = rCur.byteBufferValue(3);
+                                if (rData != null) {
+                                    TLRPC.Message rMsg = TLRPC.Message.TLdeserialize(rData, rData.readInt32(false), false);
+                                    rData.reuse();
+                                    if (rMsg != null && rMsg.post) {
+                                        isChannelPost = true;
+                                    }
+                                }
+                            }
+                            if (((rout == 1 && !isChannelPost) || getMessagesController().isLocallyDeleted(ruid, rmid)) && !replyIdsList.contains(rmid)) {
+                                replyIdsList.add(rmid);
+                            }
                         }
-                    } else if (i == 1) {
-                        if (dialogId != 0) {
-                            state = getMessagesStorage().getDatabase().executeFast("UPDATE scheduled_messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?) AND uid = ?");
-                        } else {
-                            state = getMessagesStorage().getDatabase().executeFast("UPDATE scheduled_messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?)");
+                    } catch (Exception e) {
+                        FileLog.e(e);
+                    } finally {
+                        if (rCur != null) {
+                            rCur.dispose();
                         }
-                    } else if (i == 2) {
-                        state = getMessagesStorage().getDatabase().executeFast("UPDATE quick_replies_messages SET replydata = ? WHERE reply_to_message_id IN(?)");
-                    } else if (i == 3) {
-                        state = getMessagesStorage().getDatabase().executeFast("UPDATE welcome_messages SET replydata = ? WHERE reply_to_message_id IN(?) AND dialog_id = ?");
-                    } else {
-                        if (dialogId == 0) {
-                            continue;
-                        }
-                        state = getMessagesStorage().getDatabase().executeFast("UPDATE messages_topics SET replydata = ? WHERE reply_to_message_id IN(?) AND uid = ?");
                     }
-                    TLRPC.TL_messageEmpty emptyMessage = new TLRPC.TL_messageEmpty();
-                    NativeByteBuffer data = new NativeByteBuffer(emptyMessage.getObjectSize());
-                    emptyMessage.serializeToStream(data);
-
-                    state.requery();
-                    state.bindByteBuffer(1, data);
-                    state.bindString(2, ids);
-                    if (dialogId != 0 && i != 2) {
-                        state.bindLong(3, dialogId);
+                    replyDeleteIds = TextUtils.join(",", replyIdsList);
+                }
+                if (!replyDeleteIds.isEmpty()) {
+                    for (int i = 0; i < 5; i++) {
+                        if (i == 0) {
+                            if (dialogId != 0) {
+                                state = getMessagesStorage().getDatabase().executeFast("UPDATE messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?) AND uid = ?");
+                            } else {
+                                state = getMessagesStorage().getDatabase().executeFast("UPDATE messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?) AND is_channel = 0");
+                            }
+                        } else if (i == 1) {
+                            if (dialogId != 0) {
+                                state = getMessagesStorage().getDatabase().executeFast("UPDATE scheduled_messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?) AND uid = ?");
+                            } else {
+                                state = getMessagesStorage().getDatabase().executeFast("UPDATE scheduled_messages_v2 SET replydata = ? WHERE reply_to_message_id IN(?)");
+                            }
+                        } else if (i == 2) {
+                            state = getMessagesStorage().getDatabase().executeFast("UPDATE quick_replies_messages SET replydata = ? WHERE reply_to_message_id IN(?)");
+                        } else if (i == 3) {
+                            state = getMessagesStorage().getDatabase().executeFast("UPDATE welcome_messages SET replydata = ? WHERE reply_to_message_id IN(?) AND dialog_id = ?");
+                        } else {
+                            if (dialogId == 0) {
+                                continue;
+                            }
+                            state = getMessagesStorage().getDatabase().executeFast("UPDATE messages_topics SET replydata = ? WHERE reply_to_message_id IN(?) AND uid = ?");
+                        }
+                        TLRPC.TL_messageEmpty emptyMessage = new TLRPC.TL_messageEmpty();
+                        NativeByteBuffer data = new NativeByteBuffer(emptyMessage.getObjectSize());
+                        emptyMessage.serializeToStream(data);
+                        state.requery();
+                        state.bindByteBuffer(1, data);
+                        state.bindString(2, replyDeleteIds);
+                        if (dialogId != 0 && i != 2) {
+                            state.bindLong(3, dialogId);
+                        }
+                        state.step();
+                        state.dispose();
+                        state = null;
+                        database.commitTransaction();
+                        data.reuse();
                     }
-                    state.step();
-                    state.dispose();
-                    state = null;
-                    database.commitTransaction();
-                    data.reuse();
                 }
 
                 deleteFromDownloadQueue(idsToDelete, true);
@@ -14886,129 +15257,198 @@ public class MessagesStorage extends BaseController {
                         cursor.dispose();
                         cursor = null;
                     }
-                    database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
-                    database.executeFast(String.format(Locale.US, "DELETE FROM messages_topics WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
-                    database.executeFast(String.format(Locale.US, "DELETE FROM polls_v2 WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
-                    database.executeFast(String.format(Locale.US, "DELETE FROM bot_keyboard WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
-                    database.executeFast(String.format(Locale.US, "DELETE FROM bot_keyboard_topics WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
-                    if (unknownMessages.isEmpty()) {
-                        cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, type FROM media_v4 WHERE mid IN(%s) AND uid = %d", ids, did));
-                        SparseArray<LongSparseArray<Integer>> mediaCounts = null;
-                        while (cursor.next()) {
-                            long uid = cursor.longValue(0);
-                            int type = cursor.intValue(1);
-                            if (mediaCounts == null) {
-                                mediaCounts = new SparseArray<>();
-                            }
-                            LongSparseArray<Integer> counts = mediaCounts.get(type);
-                            Integer count;
-                            if (counts == null) {
-                                counts = new LongSparseArray<>();
-                                count = 0;
-                                mediaCounts.put(type, counts);
-                            } else {
-                                count = counts.get(uid);
-                            }
-                            if (count == null) {
-                                count = 0;
-                            }
-                            count++;
-                            counts.put(uid, count);
-                        }
-                        cursor.dispose();
-                        cursor = null;
-                        if (mediaCounts != null) {
-                            state = database.executeFast("REPLACE INTO media_counts_v2 VALUES(?, ?, ?, ?)");
-                            for (int c = 0, N3 = mediaCounts.size(); c < N3; c++) {
-                                int type = mediaCounts.keyAt(c);
-                                LongSparseArray<Integer> value = mediaCounts.valueAt(c);
-                                for (int b = 0, N2 = value.size(); b < N2; b++) {
-                                    long uid = value.keyAt(b);
-                                    int count = -1;
-                                    int old = 0;
-                                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT count, old FROM media_counts_v2 WHERE uid = %d AND type = %d LIMIT 1", uid, type));
-                                    if (cursor.next()) {
-                                        count = cursor.intValue(0);
-                                        old = cursor.intValue(1);
-                                    }
-                                    cursor.dispose();
-                                    if (count != -1) {
-                                        state.requery();
-                                        count = Math.max(0, count - value.valueAt(b));
-                                        state.bindLong(1, uid);
-                                        state.bindInteger(2, type);
-                                        state.bindInteger(3, count);
-                                        state.bindInteger(4, old);
-                                        state.step();
+                    boolean antiDeleteEnabled = org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled();
+                    ArrayList<Integer> actualDeletedMids = new ArrayList<>();
+                    if (antiDeleteEnabled) {
+                        SparseBooleanArray handledMids = new SparseBooleanArray();
+                        SQLiteCursor antiCur = null;
+                        try {
+                            antiCur = database.queryFinalized(String.format(Locale.US, "SELECT mid, out, data FROM messages_v2 WHERE mid IN(%s) AND uid = %d UNION SELECT mid, out, data FROM messages_topics WHERE mid IN(%s) AND uid = %d", idsStr, did, idsStr, did));
+                            while (antiCur.next()) {
+                                int amid = antiCur.intValue(0);
+                                if (handledMids.get(amid)) {
+                                    continue;
+                                }
+                                handledMids.put(amid, true);
+                                boolean isOutRow = antiCur.intValue(1) == 1;
+                                boolean isChannelPost = false;
+                                if (isOutRow && did < 0) {
+                                    NativeByteBuffer rowData = antiCur.byteBufferValue(2);
+                                    if (rowData != null) {
+                                        TLRPC.Message rowMsg = TLRPC.Message.TLdeserialize(rowData, rowData.readInt32(false), false);
+                                        rowData.reuse();
+                                        if (rowMsg != null && rowMsg.post) {
+                                            isChannelPost = true;
+                                        }
                                     }
                                 }
-                            }
-                            state.dispose();
-                            state = null;
-                        }
-                    }
-                    if (unknownMessagesInTopics.isEmpty()) {
-                        cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, topic_id, type FROM media_topics WHERE mid IN(%s) AND uid = %d", ids, did));
-                        SparseArray<HashMap<TopicKey, Integer>> mediaCounts = null;
-                        while (cursor.next()) {
-                            long uid = cursor.longValue(0);
-                            int topicId = cursor.intValue(1);
-                            int type = cursor.intValue(2);
-                            TopicKey topicKey = TopicKey.of(uid, topicId);
-                            if (mediaCounts == null) {
-                                mediaCounts = new SparseArray<>();
-                            }
-                            HashMap<TopicKey, Integer> counts = mediaCounts.get(type);
-                            Integer count;
-                            if (counts == null) {
-                                counts = new HashMap<>();
-                                count = 0;
-                                mediaCounts.put(type, counts);
-                            } else {
-                                count = counts.get(topicKey);
-                            }
-                            if (count == null) {
-                                count = 0;
-                            }
-                            count++;
-                            counts.put(topicKey, count);
-                        }
-                        cursor.dispose();
-                        cursor = null;
-                        if (mediaCounts != null) {
-                            state = database.executeFast("REPLACE INTO media_counts_topics VALUES(?, ?, ?, ?, ?)");
-                            for (int c = 0, N3 = mediaCounts.size(); c < N3; c++) {
-                                int type = mediaCounts.keyAt(c);
-                                HashMap<TopicKey, Integer> value = mediaCounts.valueAt(c);
-                                Iterator<TopicKey> iterator = value.keySet().iterator();
-                                while (iterator.hasNext()) {
-                                    TopicKey topicKey = iterator.next();
-                                    int count = -1;
-                                    int old = 0;
-                                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT count, old FROM media_counts_topics WHERE uid = %d AND topic_id = %d AND type = %d LIMIT 1", topicKey.dialogId, topicKey.topicId, type));
-                                    if (cursor.next()) {
-                                        count = cursor.intValue(0);
-                                        old = cursor.intValue(1);
+                                boolean allowPermanentDelete = (isOutRow && !isChannelPost) || getMessagesController().isLocallyDeleted(did, amid);
+                                if (allowPermanentDelete) {
+                                    actualDeletedMids.add(amid);
+                                    database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE mid = %d AND uid = %d", amid, did)).stepThis().dispose();
+                                    database.executeFast(String.format(Locale.US, "DELETE FROM messages_topics WHERE mid = %d AND uid = %d", amid, did)).stepThis().dispose();
+                                    database.executeFast(String.format(Locale.US, "DELETE FROM media_v4 WHERE mid = %d AND uid = %d", amid, did)).stepThis().dispose();
+                                    database.executeFast(String.format(Locale.US, "DELETE FROM media_topics WHERE mid = %d AND uid = %d", amid, did)).stepThis().dispose();
+                                    continue;
+                                }
+                                TLRPC.Message amsg = getMessageWithCustomParamsOnlyInternal(amid, did);
+                                if (amsg != null) {
+                                    amsg.isAntiDeleted = true;
+                                    NativeByteBuffer nativeByteBuffer = MessageCustomParamsHelper.writeLocalParams(amsg);
+                                    for (int i = 0; i < 2; i++) {
+                                        SQLitePreparedStatement st = database.executeFast(i == 0 ? "UPDATE messages_v2 SET custom_params = ? WHERE mid = ? AND uid = ?" : "UPDATE messages_topics SET custom_params = ? WHERE mid = ? AND uid = ?");
+                                        st.requery();
+                                        if (nativeByteBuffer != null) {
+                                            st.bindByteBuffer(1, nativeByteBuffer);
+                                        } else {
+                                            st.bindNull(1);
+                                        }
+                                        st.bindInteger(2, amid);
+                                        st.bindLong(3, did);
+                                        st.step();
+                                        st.dispose();
                                     }
-                                    cursor.dispose();
-                                    if (count != -1) {
-                                        state.requery();
-                                        count = Math.max(0, count - value.get(topicKey));
-                                        state.bindLong(1, topicKey.dialogId);
-                                        state.bindLong(2, topicKey.topicId);
-                                        state.bindInteger(3, type);
-                                        state.bindInteger(4, count);
-                                        state.bindInteger(5, old);
-                                        state.step();
+                                    if (nativeByteBuffer != null) {
+                                        nativeByteBuffer.reuse();
                                     }
+                                    org.nayagram.platform.history.NGAntiDeleteVault.saveFromMainDb(currentUser, database, did, amid);
                                 }
                             }
-                            state.dispose();
-                            state = null;
+                        } catch (Exception e) {
+                            FileLog.e(e);
+                        } finally {
+                            if (antiCur != null) {
+                                antiCur.dispose();
+                            }
                         }
+                    } else {
+                        database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
+                        database.executeFast(String.format(Locale.US, "DELETE FROM messages_topics WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
                     }
-                    database.executeFast(String.format(Locale.US, "DELETE FROM media_v4 WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
-                    database.executeFast(String.format(Locale.US, "DELETE FROM media_topics WHERE mid IN(%s) AND uid = %d", ids, did)).stepThis().dispose();
+                    String effectiveDeleteIds = antiDeleteEnabled ? TextUtils.join(",", actualDeletedMids) : ids;
+                    if (!effectiveDeleteIds.isEmpty()) {
+                        database.executeFast(String.format(Locale.US, "DELETE FROM polls_v2 WHERE mid IN(%s) AND uid = %d", effectiveDeleteIds, did)).stepThis().dispose();
+                        database.executeFast(String.format(Locale.US, "DELETE FROM bot_keyboard WHERE mid IN(%s) AND uid = %d", effectiveDeleteIds, did)).stepThis().dispose();
+                        database.executeFast(String.format(Locale.US, "DELETE FROM bot_keyboard_topics WHERE mid IN(%s) AND uid = %d", effectiveDeleteIds, did)).stepThis().dispose();
+                        if (unknownMessages.isEmpty()) {
+                            cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, type FROM media_v4 WHERE mid IN(%s) AND uid = %d", effectiveDeleteIds, did));
+                            SparseArray<LongSparseArray<Integer>> mediaCounts = null;
+                            while (cursor.next()) {
+                                long uid = cursor.longValue(0);
+                                int type = cursor.intValue(1);
+                                if (mediaCounts == null) {
+                                    mediaCounts = new SparseArray<>();
+                                }
+                                LongSparseArray<Integer> counts = mediaCounts.get(type);
+                                Integer count;
+                                if (counts == null) {
+                                    counts = new LongSparseArray<>();
+                                    count = 0;
+                                    mediaCounts.put(type, counts);
+                                } else {
+                                    count = counts.get(uid);
+                                }
+                                if (count == null) {
+                                    count = 0;
+                                }
+                                count++;
+                                counts.put(uid, count);
+                            }
+                            cursor.dispose();
+                            cursor = null;
+                            if (mediaCounts != null) {
+                                state = database.executeFast("REPLACE INTO media_counts_v2 VALUES(?, ?, ?, ?)");
+                                for (int c = 0, N3 = mediaCounts.size(); c < N3; c++) {
+                                    int type = mediaCounts.keyAt(c);
+                                    LongSparseArray<Integer> value = mediaCounts.valueAt(c);
+                                    for (int b = 0, N2 = value.size(); b < N2; b++) {
+                                        long uid = value.keyAt(b);
+                                        int count = -1;
+                                        int old = 0;
+                                        cursor = database.queryFinalized(String.format(Locale.US, "SELECT count, old FROM media_counts_v2 WHERE uid = %d AND type = %d LIMIT 1", uid, type));
+                                        if (cursor.next()) {
+                                            count = cursor.intValue(0);
+                                            old = cursor.intValue(1);
+                                        }
+                                        cursor.dispose();
+                                        if (count != -1) {
+                                            state.requery();
+                                            count = Math.max(0, count - value.valueAt(b));
+                                            state.bindLong(1, uid);
+                                            state.bindInteger(2, type);
+                                            state.bindInteger(3, count);
+                                            state.bindInteger(4, old);
+                                            state.step();
+                                        }
+                                    }
+                                }
+                                state.dispose();
+                                state = null;
+                            }
+                        }
+                        if (unknownMessagesInTopics.isEmpty()) {
+                            cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, topic_id, type FROM media_topics WHERE mid IN(%s) AND uid = %d", effectiveDeleteIds, did));
+                            SparseArray<HashMap<TopicKey, Integer>> mediaCounts = null;
+                            while (cursor.next()) {
+                                long uid = cursor.longValue(0);
+                                int topicId = cursor.intValue(1);
+                                int type = cursor.intValue(2);
+                                TopicKey topicKey = TopicKey.of(uid, topicId);
+                                if (mediaCounts == null) {
+                                    mediaCounts = new SparseArray<>();
+                                }
+                                HashMap<TopicKey, Integer> counts = mediaCounts.get(type);
+                                Integer count;
+                                if (counts == null) {
+                                    counts = new HashMap<>();
+                                    count = 0;
+                                    mediaCounts.put(type, counts);
+                                } else {
+                                    count = counts.get(topicKey);
+                                }
+                                if (count == null) {
+                                    count = 0;
+                                }
+                                count++;
+                                counts.put(topicKey, count);
+                            }
+                            cursor.dispose();
+                            cursor = null;
+                            if (mediaCounts != null) {
+                                state = database.executeFast("REPLACE INTO media_counts_topics VALUES(?, ?, ?, ?, ?)");
+                                for (int c = 0, N3 = mediaCounts.size(); c < N3; c++) {
+                                    int type = mediaCounts.keyAt(c);
+                                    HashMap<TopicKey, Integer> value = mediaCounts.valueAt(c);
+                                    Iterator<TopicKey> iterator = value.keySet().iterator();
+                                    while (iterator.hasNext()) {
+                                        TopicKey topicKey = iterator.next();
+                                        int count = -1;
+                                        int old = 0;
+                                        cursor = database.queryFinalized(String.format(Locale.US, "SELECT count, old FROM media_counts_topics WHERE uid = %d AND topic_id = %d AND type = %d LIMIT 1", topicKey.dialogId, topicKey.topicId, type));
+                                        if (cursor.next()) {
+                                            count = cursor.intValue(0);
+                                            old = cursor.intValue(1);
+                                        }
+                                        cursor.dispose();
+                                        if (count != -1) {
+                                            state.requery();
+                                            count = Math.max(0, count - value.get(topicKey));
+                                            state.bindLong(1, topicKey.dialogId);
+                                            state.bindLong(2, topicKey.topicId);
+                                            state.bindInteger(3, type);
+                                            state.bindInteger(4, count);
+                                            state.bindInteger(5, old);
+                                            state.step();
+                                        }
+                                    }
+                                }
+                                state.dispose();
+                                state = null;
+                            }
+                        }
+                        database.executeFast(String.format(Locale.US, "DELETE FROM media_v4 WHERE mid IN(%s) AND uid = %d", effectiveDeleteIds, did)).stepThis().dispose();
+                        database.executeFast(String.format(Locale.US, "DELETE FROM media_topics WHERE mid IN(%s) AND uid = %d", effectiveDeleteIds, did)).stepThis().dispose();
+                    }
                 }
                 if (!savedMessagesByDialogs.isEmpty()) {
                     AndroidUtilities.runOnUIThread(() -> getMessagesController().getSavedMessagesController().updateDeleted(savedMessagesByDialogs));
@@ -15148,7 +15588,7 @@ public class MessagesStorage extends BaseController {
             ArrayList<Integer> encryptedToLoad = new ArrayList<>();
             LongSparseArray<Long> groupsToLoad = new LongSparseArray<>();
 
-            cursor = database.queryFinalized(String.format(Locale.US, "SELECT d.did, d.last_mid, d.unread_count, d.date, m.data, m.read_state, m.mid, m.send_state, m.date, d.pts, d.inbox_max, d.outbox_max, d.pinned, d.unread_count_i, d.flags, d.folder_id, d.data, d.unread_reactions, d.last_mid_group, d.ttl_period, d.unread_poll_votes FROM dialogs as d LEFT JOIN messages_v2 as m ON d.last_mid = m.mid AND d.did = m.uid AND d.last_mid_group IS NULL WHERE d.did IN(%s)", ids));
+            cursor = database.queryFinalized(String.format(Locale.US, "SELECT d.did, d.last_mid, d.unread_count, d.date, m.data, m.read_state, m.mid, m.send_state, m.date, d.pts, d.inbox_max, d.outbox_max, d.pinned, d.unread_count_i, d.flags, d.folder_id, d.data, d.unread_reactions, d.last_mid_group, d.ttl_period, d.unread_poll_votes, m.custom_params FROM dialogs as d LEFT JOIN messages_v2 as m ON d.last_mid = m.mid AND d.did = m.uid AND d.last_mid_group IS NULL WHERE d.did IN(%s)", ids));
             while (cursor.next()) {
                 long dialogId = cursor.longValue(0);
                 TLRPC.Dialog dialog;
@@ -15206,6 +15646,11 @@ public class MessagesStorage extends BaseController {
                         dialog.last_message_date = date;
                     }
                     message.dialog_id = dialog.id;
+                    NativeByteBuffer customParams = cursor.byteBufferValue(21);
+                    if (customParams != null) {
+                        MessageCustomParamsHelper.readLocalParams(message, customParams);
+                        customParams.reuse();
+                    }
                     dialogs.messages.add(message);
 
                     addUsersAndChatsFromMessage(message, usersToLoad, chatsToLoad, null);
@@ -15241,7 +15686,7 @@ public class MessagesStorage extends BaseController {
                         whereClause.append(" OR ");
                     }
                 }
-                cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, data, read_state, mid, send_state, date, group_id FROM messages_v2 WHERE %s", whereClause));
+                cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, data, read_state, mid, send_state, date, group_id, custom_params FROM messages_v2 WHERE %s", whereClause));
                 while (cursor.next()) {
                     long dialogId = cursor.longValue(0);
                     TLRPC.Dialog dialog = null;
@@ -15268,6 +15713,11 @@ public class MessagesStorage extends BaseController {
                             dialog.last_message_date = date;
                         }
                         message.dialog_id = dialog.id;
+                        NativeByteBuffer customParams = cursor.byteBufferValue(7);
+                        if (customParams != null) {
+                            MessageCustomParamsHelper.readLocalParams(message, customParams);
+                            customParams.reuse();
+                        }
                         dialogs.messages.add(message);
 
                         addUsersAndChatsFromMessage(message, usersToLoad, chatsToLoad, null);
@@ -15336,11 +15786,15 @@ public class MessagesStorage extends BaseController {
             ArrayList<Pair<Long, Integer>> idsToDelete = new ArrayList<>();
             long currentUser = getUserConfig().getClientUserId();
 
-            cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, data, read_state, out, mention FROM messages_v2 WHERE uid = %d AND mid <= %d", -channelId, mid));
+            long targetUid = -channelId;
+            boolean antiDeleteEnabled = org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled();
+
+            cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, data, read_state, out, mention, mid FROM messages_v2 WHERE uid = %d AND mid <= %d", -channelId, mid));
 
             try {
                 while (cursor.next()) {
                     long did = cursor.longValue(0);
+                    int msgId = cursor.intValue(5);
                     if (did != currentUser) {
                         int read_state = cursor.intValue(2);
                         if (cursor.intValue(3) == 0) {
@@ -15365,7 +15819,9 @@ public class MessagesStorage extends BaseController {
                         TLRPC.Message message = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
                         message.readAttachPath(data, getUserConfig().clientUserId);
                         data.reuse();
-                        addFilesToDelete(message, filesToDelete, idsToDelete, namesToDelete, false);
+                        if (!antiDeleteEnabled || (message.out && !message.post) || getMessagesController().isLocallyDeleted(did, msgId)) {
+                            addFilesToDelete(message, filesToDelete, idsToDelete, namesToDelete, false);
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -15403,37 +15859,107 @@ public class MessagesStorage extends BaseController {
                 state = null;
             }
 
-
-            database.executeFast(String.format(Locale.US, "UPDATE chat_settings_v2 SET pinned = 0 WHERE uid = %d AND pinned <= %d", channelId, mid)).stepThis().dispose();
-            database.executeFast(String.format(Locale.US, "DELETE FROM chat_pinned_v2 WHERE uid = %d AND mid <= %d", channelId, mid)).stepThis().dispose();
-            int updatedCount = 0;
-            cursor = database.queryFinalized("SELECT changes()");
-            if (cursor.next()) {
-                updatedCount = cursor.intValue(0);
-            }
-            cursor.dispose();
-            cursor = null;
-            if (updatedCount > 0) {
-                cursor = database.queryFinalized(String.format(Locale.US, "SELECT count FROM chat_pinned_count WHERE uid = %d", -channelId));
+            if (antiDeleteEnabled) {
+                ArrayList<Integer> actualDeletedMids = new ArrayList<>();
+                SparseBooleanArray handledMids = new SparseBooleanArray();
+                SQLiteCursor antiCur = null;
+                try {
+                    antiCur = database.queryFinalized(String.format(Locale.US, "SELECT mid, out, data FROM messages_v2 WHERE uid = %d AND mid <= %d UNION SELECT mid, out, data FROM messages_topics WHERE uid = %d AND mid <= %d", targetUid, mid, targetUid, mid));
+                    while (antiCur.next()) {
+                        int amid = antiCur.intValue(0);
+                        if (handledMids.get(amid)) {
+                            continue;
+                        }
+                        handledMids.put(amid, true);
+                        boolean isOutRow = antiCur.intValue(1) == 1;
+                        boolean isChannelPost = false;
+                        if (isOutRow && targetUid < 0) {
+                            NativeByteBuffer rowData = antiCur.byteBufferValue(2);
+                            if (rowData != null) {
+                                TLRPC.Message rowMsg = TLRPC.Message.TLdeserialize(rowData, rowData.readInt32(false), false);
+                                rowData.reuse();
+                                if (rowMsg != null && rowMsg.post) {
+                                    isChannelPost = true;
+                                }
+                            }
+                        }
+                        boolean allowPermanentDelete = (isOutRow && !isChannelPost) || getMessagesController().isLocallyDeleted(targetUid, amid);
+                        if (allowPermanentDelete) {
+                            actualDeletedMids.add(amid);
+                            database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE mid = %d AND uid = %d", amid, targetUid)).stepThis().dispose();
+                            database.executeFast(String.format(Locale.US, "DELETE FROM messages_topics WHERE mid = %d AND uid = %d", amid, targetUid)).stepThis().dispose();
+                            database.executeFast(String.format(Locale.US, "DELETE FROM media_v4 WHERE mid = %d AND uid = %d", amid, targetUid)).stepThis().dispose();
+                            database.executeFast(String.format(Locale.US, "DELETE FROM media_topics WHERE mid = %d AND uid = %d", amid, targetUid)).stepThis().dispose();
+                            continue;
+                        }
+                        TLRPC.Message amsg = getMessageWithCustomParamsOnlyInternal(amid, targetUid);
+                        if (amsg != null && !amsg.isAntiDeleted) {
+                            amsg.isAntiDeleted = true;
+                            NativeByteBuffer nativeByteBuffer = MessageCustomParamsHelper.writeLocalParams(amsg);
+                            for (int i = 0; i < 2; i++) {
+                                SQLitePreparedStatement st = database.executeFast(i == 0 ? "UPDATE messages_v2 SET custom_params = ? WHERE mid = ? AND uid = ?" : "UPDATE messages_topics SET custom_params = ? WHERE mid = ? AND uid = ?");
+                                st.requery();
+                                if (nativeByteBuffer != null) {
+                                    st.bindByteBuffer(1, nativeByteBuffer);
+                                } else {
+                                    st.bindNull(1);
+                                }
+                                st.bindInteger(2, amid);
+                                st.bindLong(3, targetUid);
+                                st.step();
+                                st.dispose();
+                            }
+                            if (nativeByteBuffer != null) {
+                                nativeByteBuffer.reuse();
+                            }
+                            org.nayagram.platform.history.NGAntiDeleteVault.saveFromMainDb(currentUser, database, targetUid, amid);
+                        }
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                } finally {
+                    if (antiCur != null) {
+                        antiCur.dispose();
+                    }
+                }
+                if (!actualDeletedMids.isEmpty()) {
+                    String effectiveDeleteIds = TextUtils.join(",", actualDeletedMids);
+                    database.executeFast(String.format(Locale.US, "DELETE FROM media_v4 WHERE uid = %d AND mid IN(%s)", targetUid, effectiveDeleteIds)).stepThis().dispose();
+                    database.executeFast(String.format(Locale.US, "UPDATE media_counts_v2 SET old = 1 WHERE uid = %d", targetUid)).stepThis().dispose();
+                    database.executeFast(String.format(Locale.US, "UPDATE media_counts_topics SET old = 1 WHERE uid = %d", targetUid)).stepThis().dispose();
+                }
+            } else {
+                database.executeFast(String.format(Locale.US, "UPDATE chat_settings_v2 SET pinned = 0 WHERE uid = %d AND pinned <= %d", channelId, mid)).stepThis().dispose();
+                database.executeFast(String.format(Locale.US, "DELETE FROM chat_pinned_v2 WHERE uid = %d AND mid <= %d", channelId, mid)).stepThis().dispose();
+                int updatedCount = 0;
+                cursor = database.queryFinalized("SELECT changes()");
                 if (cursor.next()) {
-                    int count = cursor.intValue(0);
-                    state = database.executeFast("UPDATE chat_pinned_count SET count = ? WHERE uid = ?");
-                    state.requery();
-                    state.bindInteger(1, Math.max(0, count - updatedCount));
-                    state.bindLong(2, -channelId);
-                    state.step();
-                    state.dispose();
-                    state = null;
+                    updatedCount = cursor.intValue(0);
                 }
                 cursor.dispose();
                 cursor = null;
-            }
+                if (updatedCount > 0) {
+                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT count FROM chat_pinned_count WHERE uid = %d", -channelId));
+                    if (cursor.next()) {
+                        int count = cursor.intValue(0);
+                        state = database.executeFast("UPDATE chat_pinned_count SET count = ? WHERE uid = ?");
+                        state.requery();
+                        state.bindInteger(1, Math.max(0, count - updatedCount));
+                        state.bindLong(2, -channelId);
+                        state.step();
+                        state.dispose();
+                        state = null;
+                    }
+                    cursor.dispose();
+                    cursor = null;
+                }
 
-            database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE uid = %d AND mid <= %d", -channelId, mid)).stepThis().dispose();
-            database.executeFast(String.format(Locale.US, "DELETE FROM messages_topics WHERE uid = %d AND mid <= %d", -channelId, mid)).stepThis().dispose();
-            database.executeFast(String.format(Locale.US, "DELETE FROM media_v4 WHERE uid = %d AND mid <= %d", -channelId, mid)).stepThis().dispose();
-            database.executeFast(String.format(Locale.US, "UPDATE media_counts_v2 SET old = 1 WHERE uid = %d", -channelId)).stepThis().dispose();
-            database.executeFast(String.format(Locale.US, "UPDATE media_counts_topics SET old = 1 WHERE uid = %d", -channelId)).stepThis().dispose();
+                database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE uid = %d AND mid <= %d", -channelId, mid)).stepThis().dispose();
+                database.executeFast(String.format(Locale.US, "DELETE FROM messages_topics WHERE uid = %d AND mid <= %d", -channelId, mid)).stepThis().dispose();
+                database.executeFast(String.format(Locale.US, "DELETE FROM media_v4 WHERE uid = %d AND mid <= %d", -channelId, mid)).stepThis().dispose();
+                database.executeFast(String.format(Locale.US, "UPDATE media_counts_v2 SET old = 1 WHERE uid = %d", -channelId)).stepThis().dispose();
+                database.executeFast(String.format(Locale.US, "UPDATE media_counts_topics SET old = 1 WHERE uid = %d", -channelId)).stepThis().dispose();
+            }
             updateWidgets(dialogsIds);
             return dialogsIds;
         } catch (Exception e) {
@@ -15839,13 +16365,24 @@ public class MessagesStorage extends BaseController {
                 int readState = 0;
                 NativeByteBuffer customParams = null;
                 try {
-                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, read_state, custom_params FROM messages_v2 WHERE mid = %d AND uid = %d LIMIT 1", message.id, MessageObject.getDialogId(message)));
+                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, read_state, custom_params, data FROM messages_v2 WHERE mid = %d AND uid = %d LIMIT 1", message.id, MessageObject.getDialogId(message)));
                     if (!cursor.next()) {
                         cursor.dispose();
                         return;
                     }
                     readState = cursor.intValue(1);
                     customParams = cursor.byteBufferValue(2);
+                    if (org.nayagram.platform.NayaConfig.getInstance().isSaveEditHistoryEnabled()) {
+                        NativeByteBuffer oldData = cursor.byteBufferValue(3);
+                        if (oldData != null) {
+                            TLRPC.Message oldMsg = TLRPC.Message.TLdeserialize(oldData, oldData.readInt32(false), false);
+                            if (oldMsg != null) {
+                                oldMsg.readAttachPath(oldData, getUserConfig().clientUserId);
+                                org.nayagram.platform.history.NGMessageEditHistory.recordEdit(currentAccount, MessageObject.getDialogId(message), oldMsg, message);
+                            }
+                            oldData.reuse();
+                        }
+                    }
                 } catch (Exception e) {
                     checkSQLException(e);
                 } finally {
@@ -16260,6 +16797,75 @@ public class MessagesStorage extends BaseController {
                         database.executeFast("DELETE FROM tag_message_id WHERE mid IN (" + TextUtils.join(",", ids) + ")").stepThis().dispose();
                         state_messages_tags = database.executeFast("REPLACE INTO tag_message_id VALUES(?, ?, ?, ?)");
                     }
+                    preserveExistingAntiDeletedInternal(messages.messages);
+                    if (threadMessageId == 0 && mode == ChatActivity.MODE_DEFAULT && DialogObject.isChatDialog(dialogId) && org.nayagram.platform.NayaConfig.getInstance().isPreventMessageDeletionEnabled()
+                            && (load_type == LOAD_BACKWARD || load_type == LOAD_FROM_UNREAD || load_type == LOAD_AROUND_MESSAGE) && !messages.messages.isEmpty()) {
+                        SparseBooleanArray returnedMids = new SparseBooleanArray();
+                        int minReturnedId = Integer.MAX_VALUE;
+                        int maxReturnedId = Integer.MIN_VALUE;
+                        for (int a = 0; a < count; a++) {
+                            TLRPC.Message m = messages.messages.get(a);
+                            if (m != null && m.id > 0) {
+                                returnedMids.put(m.id, true);
+                                if (m.id < minReturnedId) minReturnedId = m.id;
+                                if (m.id > maxReturnedId) maxReturnedId = m.id;
+                            }
+                        }
+                        int windowMaxId = (load_type == LOAD_BACKWARD && max_id == 0) ? Integer.MAX_VALUE : maxReturnedId;
+                        if (minReturnedId != Integer.MAX_VALUE && minReturnedId <= windowMaxId) {
+                            SQLiteCursor missingCur = null;
+                            try {
+                                missingCur = database.queryFinalized(String.format(Locale.US, "SELECT mid, data, custom_params FROM messages_v2 WHERE uid = %d AND mid >= %d AND mid <= %d", dialogId, minReturnedId, windowMaxId));
+                                while (missingCur.next()) {
+                                    int amid = missingCur.intValue(0);
+                                    if (amid <= 0 || returnedMids.get(amid) || getMessagesController().isLocallyDeleted(dialogId, amid)) {
+                                        continue;
+                                    }
+                                    NativeByteBuffer oldData = missingCur.byteBufferValue(1);
+                                    if (oldData == null) {
+                                        continue;
+                                    }
+                                    TLRPC.Message oldMsg = TLRPC.Message.TLdeserialize(oldData, oldData.readInt32(false), false);
+                                    oldData.reuse();
+                                    if (oldMsg == null || (oldMsg.out && !oldMsg.post)) {
+                                        continue;
+                                    }
+                                    NativeByteBuffer paramsBuf = missingCur.byteBufferValue(2);
+                                    if (paramsBuf != null) {
+                                        MessageCustomParamsHelper.readLocalParams(oldMsg, paramsBuf);
+                                        paramsBuf.reuse();
+                                    }
+                                    if (!oldMsg.isAntiDeleted) {
+                                        oldMsg.isAntiDeleted = true;
+                                        NativeByteBuffer written = MessageCustomParamsHelper.writeLocalParams(oldMsg);
+                                        for (int i = 0; i < 2; i++) {
+                                            SQLitePreparedStatement st = database.executeFast(i == 0 ? "UPDATE messages_v2 SET custom_params = ? WHERE mid = ? AND uid = ?" : "UPDATE messages_topics SET custom_params = ? WHERE mid = ? AND uid = ?");
+                                            st.requery();
+                                            if (written != null) {
+                                                st.bindByteBuffer(1, written);
+                                            } else {
+                                                st.bindNull(1);
+                                            }
+                                            st.bindInteger(2, amid);
+                                            st.bindLong(3, dialogId);
+                                            st.step();
+                                            st.dispose();
+                                        }
+                                        if (written != null) {
+                                            written.reuse();
+                                        }
+                                        org.nayagram.platform.history.NGAntiDeleteVault.saveFromMainDb(selfId, database, dialogId, amid);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                FileLog.e(e);
+                            } finally {
+                                if (missingCur != null) {
+                                    missingCur.dispose();
+                                }
+                            }
+                        }
+                    }
                     for (int a = 0; a < count; a++) {
                         TLRPC.Message message = messages.messages.get(a);
                         if (lastMessageId == null && message != null || lastMessageId != null && lastMessageId < message.id) {
@@ -16272,14 +16878,21 @@ public class MessagesStorage extends BaseController {
                         }
 
                         if (load_type == -2) {
-                            cursor = database.queryFinalized(String.format(Locale.US, "SELECT mid, data, ttl, mention, read_state, send_state, custom_params FROM messages_v2 WHERE mid = %d AND uid = %d", message.id, MessageObject.getDialogId(message)));
-                            boolean exist;
-                            if (exist = cursor.next()) {
+                            long msgDialogId = MessageObject.getDialogId(message);
+                            cursor = database.queryFinalized(String.format(Locale.US, "SELECT mid, data, ttl, mention, read_state, send_state, custom_params FROM messages_v2 WHERE mid = %d AND uid = %d", message.id, msgDialogId));
+                            boolean exist = cursor.next();
+                            if (!exist) {
+                                cursor.dispose();
+                                cursor = database.queryFinalized(String.format(Locale.US, "SELECT mid, data, ttl, mention, read_state, send_state, custom_params FROM messages_topics WHERE mid = %d AND uid = %d LIMIT 1", message.id, msgDialogId));
+                                exist = cursor.next();
+                            }
+                            if (exist) {
                                 NativeByteBuffer data = cursor.byteBufferValue(1);
                                 if (data != null) {
                                     TLRPC.Message oldMessage = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
                                     oldMessage.readAttachPath(data, getUserConfig().clientUserId);
                                     data.reuse();
+                                    org.nayagram.platform.history.NGMessageEditHistory.recordEdit(currentAccount, msgDialogId, oldMessage, message);
                                     if (reactionUpdates != null) {
                                         reactionUpdates.add(new SavedReactionsUpdate(selfId, oldMessage, message));
                                     }
@@ -16946,6 +17559,7 @@ public class MessagesStorage extends BaseController {
             ArrayList<TLRPC.EncryptedChat> encryptedChats = new ArrayList<>();
             SQLiteCursor cursor = null;
             try {
+                ensureAntiDeleteVaultRestoredInternal();
                 ArrayList<Long> usersToLoad = new ArrayList<>();
                 HashSet<Long> dialogUsers = new HashSet<>();
                 usersToLoad.add(getUserConfig().getClientUserId());
@@ -16970,7 +17584,7 @@ public class MessagesStorage extends BaseController {
                     }
 
                     ArrayList<Pair<Long, Long>> dialogsToLoadGroupMessages = new ArrayList<>();
-                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT d.did, d.last_mid, d.unread_count, d.date, m.data, m.read_state, m.mid, m.send_state, s.flags, m.date, d.pts, d.inbox_max, d.outbox_max, m.replydata, d.pinned, d.unread_count_i, d.flags, d.folder_id, d.data, d.unread_reactions, d.last_mid_group, d.ttl_period, d.unread_poll_votes FROM dialogs as d LEFT JOIN messages_v2 as m ON d.last_mid = m.mid AND d.did = m.uid AND d.last_mid_group IS NULL LEFT JOIN dialog_settings as s ON d.did = s.did WHERE d.folder_id = %d ORDER BY d.pinned DESC, d.date DESC LIMIT %d,%d", fid, off, cnt));
+                    cursor = database.queryFinalized(String.format(Locale.US, "SELECT d.did, d.last_mid, d.unread_count, d.date, m.data, m.read_state, m.mid, m.send_state, s.flags, m.date, d.pts, d.inbox_max, d.outbox_max, m.replydata, d.pinned, d.unread_count_i, d.flags, d.folder_id, d.data, d.unread_reactions, d.last_mid_group, d.ttl_period, d.unread_poll_votes, m.custom_params FROM dialogs as d LEFT JOIN messages_v2 as m ON d.last_mid = m.mid AND d.did = m.uid AND d.last_mid_group IS NULL LEFT JOIN dialog_settings as s ON d.did = s.did WHERE d.folder_id = %d ORDER BY d.pinned DESC, d.date DESC LIMIT %d,%d", fid, off, cnt));
                     while (cursor.next()) {
                         long dialogId = cursor.longValue(0);
                         TLRPC.Dialog dialog;
@@ -17039,6 +17653,13 @@ public class MessagesStorage extends BaseController {
                             if (message != null) {
                                 message.readAttachPath(data, getUserConfig().clientUserId);
                                 data.reuse();
+                                if (!cursor.isNull(23)) {
+                                    NativeByteBuffer customParams = cursor.byteBufferValue(23);
+                                    if (customParams != null) {
+                                        MessageCustomParamsHelper.readLocalParams(message, customParams);
+                                        customParams.reuse();
+                                    }
+                                }
                                 MessageObject.setUnreadFlags(message, cursor.intValue(5));
                                 message.id = cursor.intValue(6);
                                 int date = cursor.intValue(9);
@@ -17110,7 +17731,7 @@ public class MessagesStorage extends BaseController {
                                 whereClause.append(" OR ");
                             }
                         }
-                        cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, data, read_state, mid, send_state, date, replydata, group_id FROM messages_v2 WHERE %s ORDER BY date DESC", whereClause));
+                        cursor = database.queryFinalized(String.format(Locale.US, "SELECT uid, data, read_state, mid, send_state, date, replydata, group_id, custom_params FROM messages_v2 WHERE %s ORDER BY date DESC", whereClause));
                         int COUNT = 0;
                         while (cursor.next()) {
                             COUNT++;
@@ -17132,6 +17753,13 @@ public class MessagesStorage extends BaseController {
                                 if (message != null) {
                                     message.readAttachPath(data, getUserConfig().clientUserId);
                                     data.reuse();
+                                    if (!cursor.isNull(8)) {
+                                        NativeByteBuffer customParams = cursor.byteBufferValue(8);
+                                        if (customParams != null) {
+                                            MessageCustomParamsHelper.readLocalParams(message, customParams);
+                                            customParams.reuse();
+                                        }
+                                    }
                                     MessageObject.setUnreadFlags(message, cursor.intValue(2));
                                     message.id = cursor.intValue(3);
                                     int date = cursor.intValue(5);
@@ -17332,6 +17960,7 @@ public class MessagesStorage extends BaseController {
         SQLitePreparedStatement state_tasks = null;
         SQLiteCursor cursor = null;
         try {
+            ensureAntiDeleteVaultRestoredInternal();
             database.beginTransaction();
             LongSparseArray<TLRPC.Message> new_dialogMessage = new LongSparseArray<>(dialogs.messages.size());
             for (int a = 0; a < dialogs.messages.size(); a++) {
@@ -17571,6 +18200,7 @@ public class MessagesStorage extends BaseController {
 
             putUsersInternal(dialogs.users);
             putChatsInternal(dialogs.chats);
+            org.nayagram.platform.history.NGAntiDeleteVault.reconcileDialogsAfterServerPut(getUserConfig().getClientUserId(), database);
 
             database.commitTransaction();
             resetAllUnreadCounters(false);

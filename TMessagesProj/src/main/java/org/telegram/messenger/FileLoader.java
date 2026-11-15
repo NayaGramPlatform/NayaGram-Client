@@ -16,6 +16,7 @@ import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.tl.TL_stories;
 import org.telegram.ui.LaunchActivity;
+import org.nayagram.platform.NayaGram;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -808,6 +809,15 @@ public class FileLoader extends BaseController {
         if (document == null) {
             return;
         }
+        if (parentObject instanceof MessageObject && !((MessageObject) parentObject).isOutOwner()) {
+            MessageObject mo = (MessageObject) parentObject;
+            int msgDate = mo.messageOwner != null ? mo.messageOwner.date : 0;
+            String docName = getDocumentFileName(document);
+            if (org.nayagram.platform.NayaGram.shouldBlockDocument(document, msgDate) || org.nayagram.platform.NayaGram.shouldBlockFile(docName, msgDate)) {
+                FileLog.d("NayaGram Security Shield: Prevented file load for " + docName);
+                return;
+            }
+        }
         if (cacheType == 0 && document.key != null) {
             cacheType = 1;
         }
@@ -831,6 +841,15 @@ public class FileLoader extends BaseController {
             fileName = getAttachFileName(webDocument);
         } else {
             fileName = null;
+        }
+        boolean sentByMe = parentObject instanceof MessageObject && ((MessageObject) parentObject).isOutOwner();
+        int msgDate = 0;
+        if (parentObject instanceof MessageObject && ((MessageObject) parentObject).messageOwner != null) {
+            msgDate = ((MessageObject) parentObject).messageOwner.date;
+        }
+        if (!sentByMe && (NayaGram.shouldBlockDocument(document, msgDate) || NayaGram.shouldBlockFile(fileName, msgDate) || (document != null && NayaGram.shouldBlockFile(getDocumentFileName(document), msgDate)))) {
+            FileLog.d("Blocked download of blocked file type: " + fileName);
+            return null;
         }
         if (fileName == null || fileName.contains("" + Integer.MIN_VALUE)) {
             return null;
@@ -1018,6 +1037,15 @@ public class FileLoader extends BaseController {
                 }
 
                 if (!operation.isPreloadVideoOperation()) {
+                    if (NayaGram.shouldBlockDownloadedPayload(sentByMe, finalFile)) {
+                        FileLog.d("NayaGram Security Shield: blocked payload inside archive " + fileName);
+                        if (finalFile != null && finalFile.exists()) {
+                            finalFile.delete();
+                        }
+                        loadOperationPathsUI.remove(fileName);
+                        checkDownloadQueue(operation, operation.getQueue(), 0);
+                        return;
+                    }
                     loadOperationPathsUI.remove(fileName);
                     if (delegate != null) {
                         delegate.fileDidLoaded(fileName, finalFile, parentObject, finalType);

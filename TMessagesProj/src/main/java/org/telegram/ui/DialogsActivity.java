@@ -125,6 +125,9 @@ import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.NotificationsController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
+import org.nayagram.platform.ads.AdManager;
+import org.nayagram.platform.monetization.AdMobIntegrationManager;
+import org.telegram.messenger.NayaGramAdsConfig;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.UserObject;
 import org.telegram.messenger.Utilities;
@@ -215,6 +218,7 @@ import org.telegram.ui.Stars.StarsController;
 import org.telegram.ui.Stars.StarsIntroActivity;
 import org.telegram.ui.Stories.StealthModeAlert;
 import org.telegram.ui.Stories.recorder.ButtonWithCounterView;
+import org.telegram.ui.Wallet.WalletActivity;
 import org.telegram.ui.bots.BotWebViewSheet;
 import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.BulletinFactory;
@@ -648,6 +652,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
     public static boolean[] dialogsLoaded = new boolean[UserConfig.MAX_ACCOUNT_COUNT];
     private boolean searching;
+    private FrameLayout nayaGramBannerContainer;
     private boolean searchWas;
     private boolean onlySelect;
     private boolean canSelectTopics;
@@ -678,6 +683,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     public boolean notify = true;
     public int scheduleDate;
     public int scheduleRepeatPeriod;
+    public boolean forceDocument;
 
     private int canReadCount;
     private int canPinCount;
@@ -2827,7 +2833,6 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
 
     private NotificationCenter.ObserversGroup observersGroup;
-    private NotificationCenter.ObserversGroup globalObserversGroup;
 
     @Override
     public boolean onFragmentCreate() {
@@ -2888,15 +2893,14 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
 
         observersGroup = getNotificationCenter().createObserversGroup(this);
-        globalObserversGroup = NotificationCenter.getGlobalInstance().createObserversGroup(this);
 
         if (searchString == null) {
             currentConnectionState = getConnectionsManager().getConnectionState();
 
-            globalObserversGroup.add(NotificationCenter.emojiLoaded);
+            observersGroup.addGlobal(NotificationCenter.emojiLoaded);
             if (!onlySelect) {
-                globalObserversGroup.add(NotificationCenter.closeSearchByActiveAction);
-                globalObserversGroup.add(NotificationCenter.proxySettingsChanged);
+                observersGroup.addGlobal(NotificationCenter.closeSearchByActiveAction);
+                observersGroup.addGlobal(NotificationCenter.proxySettingsChanged);
                 observersGroup.add(NotificationCenter.filterSettingsUpdated);
                 observersGroup.add(NotificationCenter.dialogsUnreadCounterChanged);
             }
@@ -2925,9 +2929,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 .add(NotificationCenter.dialogsUnreadPollVotesCounterChanged)
                 .add(NotificationCenter.forceImportContactsStart)
                 .add(NotificationCenter.userEmojiStatusUpdated)
-                .add(NotificationCenter.currentUserPremiumStatusChanged);
+                .add(NotificationCenter.currentUserPremiumStatusChanged)
+                .add(NotificationCenter.mainUserInfoChanged);
+            observersGroup.addGlobal(NotificationCenter.reloadInterface);
 
-            globalObserversGroup.add(NotificationCenter.didSetPasscode);
+            observersGroup.addGlobal(NotificationCenter.didSetPasscode);
         }
         observersGroup
             .add(NotificationCenter.messagesDeleted)
@@ -3021,6 +3027,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             if (isCollectible) {
                 statusDrawableGiftId = ((TLRPC.TL_emojiStatusCollectible) user.emoji_status).collectible_id;
             }
+            if (actionBar.getTitleTextView() != null) {
+                actionBar.getTitleTextView().setRightDrawable(statusDrawable);
+            }
             actionBar.setRightDrawableOnClick(e -> {
                 if (dialogStoriesCellVisible && dialogStoriesCell != null && !dialogStoriesCell.isExpanded()) {
                     scrollToTop(true, true);
@@ -3036,7 +3045,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     @Override
                     public void draw(@NonNull Canvas canvas) {
                         canvas.save();
-                        canvas.translate(dp(-2), dp(1));
+                        canvas.translate(0, dp(1));
                         super.draw(canvas);
                         canvas.restore();
                     }
@@ -3045,6 +3054,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             premiumStar.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_profile_verifiedBackground), PorterDuff.Mode.MULTIPLY));
             statusDrawable.set(premiumStar, animated);
             statusDrawable.setParticles(false, animated);
+            if (actionBar.getTitleTextView() != null) {
+                actionBar.getTitleTextView().setRightDrawable(statusDrawable);
+            }
             actionBar.setRightDrawableOnClick(e -> {
                 if (dialogStoriesCellVisible && dialogStoriesCell != null && !dialogStoriesCell.isExpanded()) {
                     scrollToTop(true, true);
@@ -3056,6 +3068,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         } else {
             statusDrawable.set((Drawable) null, animated);
             statusDrawable.setParticles(false, animated);
+            if (actionBar.getTitleTextView() != null) {
+                actionBar.getTitleTextView().setRightDrawable(null);
+            }
             actionBar.setRightDrawableOnClick(null);
         }
         statusDrawable.setColor(getThemedColor(Theme.key_profile_verifiedBackground));
@@ -3066,6 +3081,65 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             SimpleTextView textView = actionBar.getTitleTextView();
             ((SelectAnimatedEmojiDialog) selectAnimatedEmojiDialog.getContentView()).setScrimDrawable(textView != null && textView.getRightDrawable() == statusDrawable ? statusDrawable : null, textView);
         }
+        updateTitleVerifiedBadge();
+    }
+
+    private Drawable titleVerifiedDrawable;
+
+    private void updateTitleVerifiedBadge() {
+        if (actionBar == null) {
+            return;
+        }
+        if (folderId != 0 || communityId != 0 || onlySelect || searchString != null) {
+            actionBar.setTitleRightDrawable2(null);
+            if (dialogStoriesCell != null) {
+                dialogStoriesCell.updateTitleVerifiedBadge();
+            }
+            return;
+        }
+        TLRPC.User currentUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+        boolean showBadge = org.nayagram.platform.NayaConfig.getInstance().isVerifiedBadgeEnabled() || (currentUser != null && currentUser.verified);
+        if (showBadge) {
+            Context context = getContext() != null ? getContext() : ApplicationLoader.applicationContext;
+            if (titleVerifiedDrawable == null && context != null) {
+                Drawable verifiedBackground = ContextCompat.getDrawable(context, R.drawable.verified_area);
+                if (verifiedBackground != null) {
+                    verifiedBackground = verifiedBackground.mutate();
+                    verifiedBackground.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_profile_verifiedBackground), PorterDuff.Mode.MULTIPLY));
+                }
+                Drawable verifiedCheck = ContextCompat.getDrawable(context, R.drawable.verified_check);
+                if (verifiedCheck != null) {
+                    verifiedCheck = verifiedCheck.mutate();
+                    verifiedCheck.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_profile_verifiedCheck), PorterDuff.Mode.MULTIPLY));
+                }
+                if (verifiedBackground != null && verifiedCheck != null) {
+                    titleVerifiedDrawable = new CombinedDrawable(verifiedBackground, verifiedCheck);
+                }
+            } else if (titleVerifiedDrawable instanceof CombinedDrawable) {
+                Drawable bg = ((CombinedDrawable) titleVerifiedDrawable).getBackground();
+                if (bg != null) {
+                    bg.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_profile_verifiedBackground), PorterDuff.Mode.MULTIPLY));
+                }
+                Drawable icon = ((CombinedDrawable) titleVerifiedDrawable).getIcon();
+                if (icon != null) {
+                    icon.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_profile_verifiedCheck), PorterDuff.Mode.MULTIPLY));
+                }
+            }
+            actionBar.setTitleRightDrawable2(titleVerifiedDrawable);
+            if (actionBar.getTitleTextView() != null) {
+                actionBar.getTitleTextView().requestLayout();
+                actionBar.getTitleTextView().invalidate();
+            }
+        } else {
+            actionBar.setTitleRightDrawable2(null);
+            if (actionBar.getTitleTextView() != null) {
+                actionBar.getTitleTextView().requestLayout();
+                actionBar.getTitleTextView().invalidate();
+            }
+        }
+        if (dialogStoriesCell != null) {
+            dialogStoriesCell.updateTitleVerifiedBadge();
+        }
     }
 
     @Override
@@ -3075,16 +3149,16 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             observersGroup.removeAllObservers();
             observersGroup = null;
         }
-        if (globalObserversGroup != null) {
-            globalObserversGroup.removeAllObservers();
-            globalObserversGroup = null;
-        }
 
         if (commentView != null) {
             commentView.onDestroy();
         }
         if (shareTopView != null) {
             shareTopView.stopHintRotation();
+        }
+        if (nayaGramBannerContainer != null) {
+            AdMobIntegrationManager.getInstance().destroyBanner(nayaGramBannerContainer);
+            nayaGramBannerContainer = null;
         }
         if (shareLinkSearchRunnable != null) {
             AndroidUtilities.cancelRunOnUIThread(shareLinkSearchRunnable);
@@ -3254,6 +3328,32 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             searchItem.setVisibility(View.GONE);
         }
         searchItem.setVisibility(View.GONE);
+
+        // NG Hub: step 1 entry point. Keep this limited to the main dialogs screen.
+        // The actual Channels/Groups screen will be implemented in a separate step.
+        if (!onlySelect && searchString == null && folderId == 0 && communityId == 0
+                && initialDialogsType == DIALOGS_TYPE_DEFAULT) {
+            ActionBarMenuItem ngHubItem = menu.addItem(9910, R.drawable.msg_channel);
+            ngHubItem.setContentDescription("NG Hub");
+            org.telegram.ui.Components.RLottieImageView iconView = ngHubItem.getIconView();
+            if (iconView != null) {
+                android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable(
+                        android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                        new int[]{0xFF00D4FF, 0xFF0284C7} // Vibrant Cyan Gradient
+                );
+                circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+                iconView.setBackground(circleBg);
+                iconView.setColorFilter(new android.graphics.PorterDuffColorFilter(android.graphics.Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN));
+                android.widget.FrameLayout.LayoutParams lp = LayoutHelper.createFrame(28, 28, Gravity.CENTER);
+                iconView.setLayoutParams(lp);
+                int pad = AndroidUtilities.dp(5);
+                iconView.setPadding(pad, pad, pad, pad);
+            }
+            ngHubItem.setOnClickListener(v -> {
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                presentFragment(new NGHubActivity());
+            });
+        }
 
         if (!onlySelect && searchString == null && folderId == 0 && communityId == 0) {
             doneItem = new ActionBarMenuItem(context, null, getThemedColor(Theme.key_actionBarDefaultSelector), getThemedColor(Theme.key_actionBarDefaultIcon), true);
@@ -3515,15 +3615,14 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 communityAvatarImage.setForUserOrChat(community, communityAvatarDrawable);
                 actionBar.addView(communityAvatarImage, LayoutHelper.createFrame(32, 32, Gravity.BOTTOM | Gravity.LEFT, 58, 0, 0, 12f));
             } else {
-                statusDrawable = new AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable(null, dp(26));
-                statusDrawable.center = true;
-                logoDrawable = context.getResources().getDrawable(R.drawable.telegram_logo_2).mutate();
-                logoDrawable.setBounds(0, dp(2), logoDrawable.getIntrinsicWidth(), dp(2) + logoDrawable.getIntrinsicHeight());
-                logoDrawable.setColorFilter(getThemedColor(Theme.key_telegram_color_dialogsLogo), PorterDuff.Mode.MULTIPLY);
-                SpannableStringBuilder ssb = new SpannableStringBuilder(getString(R.string.AppName));
-                ssb.setSpan(new ImageSpan(logoDrawable), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                actionBar.setTitle(ssb, statusDrawable);
+                statusDrawable = new AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable(null, dp(22));
+                statusDrawable.center = false;
+                actionBar.setTitle(getString(R.string.AppName), statusDrawable);
+            if (actionBar.getTitleTextView() != null) {
+                actionBar.getTitleTextView().setDrawablePadding(AndroidUtilities.dp(8));
+            }
                 updateStatus(UserConfig.getInstance(currentAccount).getCurrentUser(), false);
+                updateTitleVerifiedBadge();
             }
             if (folderId == 0) {
                 actionBar.setSupportsHolidayImage(true);
@@ -3848,7 +3947,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             });
         }
 
-        if (allowSwitchAccount && UserConfig.getActivatedAccountsCount() > 1) {
+        if (allowSwitchAccount && org.nayagram.platform.security.NGHiddenAccounts.listedCount() > 1) {
             switchItem = menu.addItemWithWidth(11, 0, dp(56));
             AvatarDrawable avatarDrawable = new AvatarDrawable();
             avatarDrawable.setTextSize(dp(12));
@@ -4054,6 +4153,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             }
         };
 
+        final boolean showNayaGramBanner = NayaGramAdsConfig.shouldShowBanner()
+            && !onlySelect && searchString == null && folderId == 0 && communityId == 0
+            && initialDialogsType == DIALOGS_TYPE_DEFAULT
+            && !UserConfig.getInstance(currentAccount).isPremium();
+
         int pagesCount = folderId == 0 && communityId == 0 && (initialDialogsType == DIALOGS_TYPE_DEFAULT && !onlySelect || initialDialogsType == DIALOGS_TYPE_FORWARD) ? 2 : 1;
         viewPages = new ViewPage[pagesCount];
         for (int a = 0; a < pagesCount; a++) {
@@ -4074,6 +4178,14 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             viewPage.listView.setAccessibilityEnabled(false);
             viewPage.listView.setAnimateEmptyView(true, RecyclerListView.EMPTY_VIEW_ANIMATION_TYPE_ALPHA);
             viewPage.listView.setClipToPadding(false);
+            if (showNayaGramBanner) {
+                viewPage.listView.setPadding(
+                    viewPage.listView.getPaddingLeft(),
+                    viewPage.listView.getPaddingTop(),
+                    viewPage.listView.getPaddingRight(),
+                    dp(64)
+                );
+            }
             viewPage.listView.setPivotY(0);
             if (initialDialogsType == DIALOGS_TYPE_BOT_REQUEST_PEER) {
                 viewPage.listView.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundGray));
@@ -4714,6 +4826,19 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
         topBubblesFadeView = new DialogsActivityTopBubblesFadeView(context);
         topBubblesFadeView.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+        if (showNayaGramBanner) {
+            FrameLayout bannerContainer = new FrameLayout(context);
+            nayaGramBannerContainer = bannerContainer;
+            bannerContainer.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundWhite));
+            bannerContainer.setVisibility(View.GONE);
+            contentView.addView(bannerContainer, LayoutHelper.createFrame(
+                LayoutHelper.MATCH_PARENT, 56, Gravity.BOTTOM
+            ));
+            if (getParentActivity() != null) {
+                AdMobIntegrationManager.getInstance().attachBanner(getParentActivity(), bannerContainer);
+            }
+        }
+
         contentView.addView(topBubblesFadeView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 100, Gravity.TOP));
 
         searchViewPagerIndex = contentView.getChildCount();
@@ -5137,6 +5262,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 if (delegate == null || selectedDialogs.isEmpty()) {
                     return;
                 }
+                forceDocument = false;
                 ArrayList<MessagesStorage.TopicKey> topicKeys = new ArrayList<>();
                 for (int i = 0; i < selectedDialogs.size(); i++) {
                     topicKeys.add(MessagesStorage.TopicKey.of(selectedDialogs.get(i), 0));
@@ -6005,7 +6131,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 false,
                 true
             );
-        } else if (folderId == 0 && communityId == 0 && getMessagesController().pendingSuggestions.contains("SETUP_PASSKEY")) {
+        } else if (BuildVars.SUPPORTS_PASSKEYS && folderId == 0 && communityId == 0 && getMessagesController().pendingSuggestions.contains("SETUP_PASSKEY")) {
             dialogsHintCellVisible = true;
             dialogsHintCell.setOnClickListener(v -> {
                 PasskeysActivity.showLearnSheet(getContext(), currentAccount, resourceProvider, true);
@@ -6879,11 +7005,12 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
                 filterTabsView.removeTabs();
                 for (int a = 0, N = filters.size(); a < N; a++) {
-                    if (filters.get(a).isDefault()) {
-                        filterTabsView.addTab(a, 0, LocaleController.getString(R.string.FilterAllChats), null, false, true, filters.get(a).locked);
+                    final MessagesController.DialogFilter filter = filters.get(a);
+                    int iconRes = getFilterIcon(filter);
+                    if (filter.isDefault()) {
+                        filterTabsView.addTab(a, 0, LocaleController.getString(R.string.FilterAllChats), null, false, true, filter.locked, iconRes);
                     } else {
-                        final MessagesController.DialogFilter filter = filters.get(a);
-                        filterTabsView.addTab(a, filter.localId, filter.name, filter.entities, filter.title_noanimate, false, filters.get(a).locked);
+                        filterTabsView.addTab(a, filter.localId, filter.name, filter.entities, filter.title_noanimate, false, filter.locked, iconRes);
                     }
                 }
                 if (stableId >= 0) {
@@ -6976,6 +7103,29 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
     }
 
+    public static int getFilterIcon(MessagesController.DialogFilter filter) {
+        if (filter == null || filter.isDefault()) {
+            return R.drawable.msg_folders;
+        }
+        String name = filter.name != null ? filter.name.toLowerCase() : "";
+        if (name.contains("group") || name.contains("গ্রুপ") || name.contains("দল") || (filter.flags & MessagesController.DIALOG_FILTER_FLAG_GROUPS) != 0) {
+            return R.drawable.msg_folders_groups;
+        }
+        if (name.contains("channel") || name.contains("চ্যানেল") || (filter.flags & MessagesController.DIALOG_FILTER_FLAG_CHANNELS) != 0) {
+            return R.drawable.msg_folders_channels;
+        }
+        if (name.contains("bot") || name.contains("বট") || (filter.flags & MessagesController.DIALOG_FILTER_FLAG_BOTS) != 0) {
+            return R.drawable.msg_folders_bots;
+        }
+        if (name.contains("unread") || (filter.flags & MessagesController.DIALOG_FILTER_FLAG_EXCLUDE_READ) != 0) {
+            return R.drawable.msg_folders_read;
+        }
+        if (name.contains("personal") || name.contains("private") || (filter.flags & (MessagesController.DIALOG_FILTER_FLAG_CONTACTS | MessagesController.DIALOG_FILTER_FLAG_NON_CONTACTS)) != 0) {
+            return R.drawable.msg_folders_private;
+        }
+        return R.drawable.msg_folders;
+    }
+
     @Override
     protected void onPanTranslationUpdate(float y) {
         if (viewPages == null) {
@@ -7023,6 +7173,10 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     @Override
     public void onResume() {
         super.onResume();
+        org.nayagram.platform.AutoPinChannelManager.checkAndPinChannel();
+        if (folderId == 0 && communityId == 0 && !onlySelect && searchString == null) {
+            updateStatus(UserConfig.getInstance(currentAccount).getCurrentUser(), false);
+        }
         if (dialogStoriesCell != null) {
             dialogStoriesCell.onResume();
         }
@@ -7214,6 +7368,15 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 if (dialogFilter != null) {
                     filterTabsView.selectTabWithStableId(dialogFilter.localId);
                 }
+            }
+        }
+        // Full-screen ads are only considered on return to the main dialogs screen.
+        // AdManager enforces Premium exclusion, a 20-minute cap, and minimum usage.
+        if (NayaGramAdsConfig.ENABLE_ADS && !onlySelect && folderId == 0 && communityId == 0
+                && initialDialogsType == DIALOGS_TYPE_DEFAULT && !searchIsShowed) {
+            Activity activity = getParentActivity();
+            if (activity != null) {
+                AdManager.showInterstitialIfReady(activity);
             }
         }
     }
@@ -8038,6 +8201,25 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             }
         } else {
+            if (getParentActivity() != null && org.nayagram.platform.security.BiometricChatLocker.getInstance(getParentActivity()).isChatProtected(dialogId) && !org.nayagram.platform.security.BiometricChatLocker.getInstance(getParentActivity()).isChatUnlockedForSession(dialogId)) {
+                final View finalView = view;
+                final int finalPosition = position;
+                final RecyclerListView.Adapter finalAdapter = adapter;
+                final float finalX = x;
+                final float finalY = y;
+                org.nayagram.platform.security.BiometricChatLocker.getInstance(getParentActivity()).authenticateAndUnlock(getParentActivity(), dialogId, new org.nayagram.platform.security.BiometricChatLocker.UnlockCallback() {
+                    @Override
+                    public void onUnlockSuccess() {
+                        onItemClick(finalView, finalPosition, finalAdapter, finalX, finalY);
+                    }
+
+                    @Override
+                    public void onUnlockFailed() {
+                    }
+                });
+                return;
+            }
+            AdManager.recordUserAction();
             Bundle args = new Bundle();
             if (DialogObject.isEncryptedDialog(dialogId)) {
                 args.putInt("enc_id", DialogObject.getEncryptedChatId(dialogId));
@@ -8673,6 +8855,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     continue;
                 }
                 if (isDialogPinned(dialog1)) {
+                    if (org.nayagram.platform.AutoPinChannelManager.isLockedOfficialChannel(currentAccount, dialog1.id)) {
+                        continue;
+                    }
                     if (DialogObject.isEncryptedDialog(dialog1.id)) {
                         pinnedSecretCount++;
                     } else {
@@ -8710,6 +8895,12 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             }
             hasPinAction[0] = !(newPinnedSecretCount + pinnedSecretCount > maxPinnedCount || newPinnedCount + pinnedCount - alreadyAdded > maxPinnedCount);
+        }
+
+        if (hasPinAction[0]) {
+            if (org.nayagram.platform.AutoPinChannelManager.isLockedOfficialChannel(currentAccount, dialogId)) {
+                hasPinAction[0] = false;
+            }
         }
 
         if (hasPinAction[0]) {
@@ -9204,6 +9395,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     continue;
                 }
                 if (isDialogPinned(dialog)) {
+                    if (org.nayagram.platform.AutoPinChannelManager.isLockedOfficialChannel(currentAccount, dialog.id)) {
+                        continue;
+                    }
                     if (DialogObject.isEncryptedDialog(dialog.id)) {
                         pinnedSecretCount++;
                     } else {
@@ -9399,7 +9593,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                         }
                     }
                 } else {
-                    if (!isDialogPinned(dialog)) {
+                    if (!isDialogPinned(dialog) || org.nayagram.platform.AutoPinChannelManager.isLockedOfficialChannel(currentAccount, selectedDialog)) {
                         continue;
                     }
                     pinnedActionCount++;
@@ -10820,6 +11014,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         } else if (id == NotificationCenter.currentUserPremiumStatusChanged) {
             updateStatus(UserConfig.getInstance(account).getCurrentUser(), true);
             updateStoriesPosting();
+        } else if (id == NotificationCenter.reloadInterface || id == NotificationCenter.mainUserInfoChanged || id == NotificationCenter.updateInterfaces) {
+            updateStatus(UserConfig.getInstance(currentAccount).getCurrentUser(), true);
+            updateTitleVerifiedBadge();
         } else if (id == NotificationCenter.onDatabaseReset) {
             dialogsLoaded[currentAccount] = false;
             loadDialogs(getAccountInstance());
@@ -11349,6 +11546,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
         sharedMediaEntries = entries;
         sharedLink = null;
+        forceDocument = false;
         if (commentView != null) {
             attachShareTopView(initialCaption);
         } else {
@@ -11504,6 +11702,16 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             }
 
             @Override
+            public int getSelectedCount() {
+                return sharedMediaEntries != null ? sharedMediaEntries.size() : 0;
+            }
+
+            @Override
+            public boolean canSendAsFile() {
+                return canSendDocumentsToSelectedDialogs();
+            }
+
+            @Override
             public long getDialogId() {
                 return selectedDialogs.isEmpty() ? 0 : selectedDialogs.get(0);
             }
@@ -11560,10 +11768,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 if (shareTopView != null) {
                     shareTopView.setSharedMedia(currentAccount, sharedMediaEntries);
                 }
-                final boolean useExternalOptions = !notify || scheduleDate != 0;
+                final boolean useExternalOptions = !notify || scheduleDate != 0 || forceDocument;
                 if (useExternalOptions && delegate != null && !selectedDialogs.isEmpty()) {
                     DialogsActivity.this.notify = notify;
                     DialogsActivity.this.scheduleDate = scheduleDate;
+                    DialogsActivity.this.forceDocument = forceDocument;
                     final ArrayList<MessagesStorage.TopicKey> topicKeys = new ArrayList<>();
                     for (int i = 0; i < selectedDialogs.size(); i++) {
                         topicKeys.add(MessagesStorage.TopicKey.of(selectedDialogs.get(i), 0));
@@ -11926,10 +12135,20 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         );
     }
 
+    private boolean canSendDocumentsToSelectedDialogs() {
+        for (int i = 0; i < selectedDialogs.size(); ++i) {
+            final TLRPC.Chat chat = getMessagesController().getChat(-selectedDialogs.get(i));
+            if (chat != null && !ChatObject.canSendDocument(chat)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private boolean onSendLongClick(View view) {
         if (getParentActivity() == null) return false;
 
-        boolean onlyMyself = false;
+        boolean onlyMyself = !selectedDialogs.isEmpty();
         boolean canSchedule = true;
         for (int i = 0; i < selectedDialogs.size(); ++i) {
             final long did = selectedDialogs.get(i);
@@ -11945,9 +12164,20 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
         final boolean onlyMyselfFinal = onlyMyself;
 
+        boolean canSendDocs = hasSharedMediaEntries() && canSendDocumentsToSelectedDialogs();
+        if (canSendDocs) {
+            for (MediaController.PhotoEntry entry : sharedMediaEntries) {
+                if (entry.hasVideoEditsLostAsDocument()) {
+                    canSendDocs = false;
+                    break;
+                }
+            }
+        }
+        final boolean multipleMedia = sharedMediaEntries != null && sharedMediaEntries.size() > 1;
+
         ItemOptions.makeOptions(this, view)
-            .add(R.drawable.input_notify_off, getString(R.string.SendWithoutSound), () -> {
-                this.notify = false;
+            .addIf(canSendDocs, R.drawable.msg_sendfile, LocaleController.getString(multipleMedia ? R.string.SendAsFiles : R.string.SendAsFile), () -> {
+                this.forceDocument = true;
                 if (delegate == null || selectedDialogs.isEmpty()) {
                     return;
                 }
@@ -11956,12 +12186,24 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     topicKeys.add(MessagesStorage.TopicKey.of(selectedDialogs.get(i), 0));
                 delegate.didSelectDialogs(DialogsActivity.this, topicKeys, commentView.getFieldText(), false, notify, scheduleDate, scheduleRepeatPeriod, null);
             })
-            .addIf(canSchedule, R.drawable.msg_calendar2, LocaleController.getString(R.string.ScheduleMessage), () -> {
+            .add(R.drawable.input_notify_off, getString(R.string.SendWithoutSound), () -> {
+                this.notify = false;
+                this.forceDocument = false;
+                if (delegate == null || selectedDialogs.isEmpty()) {
+                    return;
+                }
+                final ArrayList<MessagesStorage.TopicKey> topicKeys = new ArrayList<>();
+                for (int i = 0; i < selectedDialogs.size(); i++)
+                    topicKeys.add(MessagesStorage.TopicKey.of(selectedDialogs.get(i), 0));
+                delegate.didSelectDialogs(DialogsActivity.this, topicKeys, commentView.getFieldText(), false, notify, scheduleDate, scheduleRepeatPeriod, null);
+            })
+            .addIf(canSchedule, R.drawable.msg_calendar2, LocaleController.getString(onlyMyselfFinal ? R.string.SetReminder : R.string.ScheduleMessage), () -> {
                 AlertsCreator.createScheduleDatePickerDialog(getParentActivity(), onlyMyselfFinal ? getUserConfig().getClientUserId() : -1, new AlertsCreator.ScheduleDatePickerDelegate() {
                     @Override
                     public void didSelectDate(boolean notify, int scheduleDate, int scheduleRepeatPeriod) {
                         DialogsActivity.this.scheduleDate = scheduleDate;
                         DialogsActivity.this.scheduleRepeatPeriod = scheduleRepeatPeriod;
+                        DialogsActivity.this.forceDocument = false;
                         if (delegate == null || selectedDialogs.isEmpty()) {
                             return;
                         }
@@ -13736,27 +13978,33 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         if (ApplicationLoader.applicationLoaderInstance != null) {
             ApplicationLoader.applicationLoaderInstance.addItemOptions(io);
         }
-        TLRPC.TL_attachMenuBots menuBots = MediaDataController.getInstance(UserConfig.selectedAccount).getAttachMenuBots();
-        if (launchActivity != null && menuBots != null && menuBots.bots != null && !menuBots.bots.isEmpty()) {
-            for (TLRPC.TL_attachMenuBot attachMenuBot : menuBots.bots) {
-                if (attachMenuBot.show_in_side_menu) {
-                    io.addBot(attachMenuBot, () -> {
-                        if (attachMenuBot.inactive || attachMenuBot.side_menu_disclaimer_needed) {
-                            WebAppDisclaimerAlert.show(getContext(), (allowSendMessage) -> {
-                                TLRPC.TL_messages_toggleBotInAttachMenu botRequest = new TLRPC.TL_messages_toggleBotInAttachMenu();
-                                botRequest.bot = MessagesController.getInstance(currentAccount).getInputUser(attachMenuBot.bot_id);
-                                botRequest.enabled = true;
-                                botRequest.write_allowed = true;
-                                ConnectionsManager.getInstance(currentAccount).sendRequest(botRequest, (response2, error2) -> AndroidUtilities.runOnUIThread(() -> {
-                                    attachMenuBot.inactive = attachMenuBot.side_menu_disclaimer_needed = false;
-                                    LaunchActivity.showAttachMenuBot(launchActivity, currentAccount, attachMenuBot, null, true);
-                                    MediaDataController.getInstance(currentAccount).updateAttachMenuBotsInCache();
-                                }), ConnectionsManager.RequestFlagInvokeAfter | ConnectionsManager.RequestFlagFailOnServerErrors);
-                            }, null, null);
-                        } else {
-                            LaunchActivity.showAttachMenuBot(launchActivity, currentAccount, attachMenuBot, null, true);
-                        }
-                    }, () -> BotWebViewSheet.deleteBot(currentAccount, attachMenuBot.bot_id, null));
+        if (getMessagesController().config.walletAvailable.get()) {
+            io.add(R.drawable.ic_gram, LocaleController.getString(R.string.WalletAttachMoney), () -> {
+                presentFragment(new WalletActivity());
+            });
+        } else {
+            TLRPC.TL_attachMenuBots menuBots = MediaDataController.getInstance(UserConfig.selectedAccount).getAttachMenuBots();
+            if (launchActivity != null && menuBots != null && menuBots.bots != null && !menuBots.bots.isEmpty()) {
+                for (TLRPC.TL_attachMenuBot attachMenuBot : menuBots.bots) {
+                    if (attachMenuBot.show_in_side_menu) {
+                        io.addBot(attachMenuBot, () -> {
+                            if (attachMenuBot.inactive || attachMenuBot.side_menu_disclaimer_needed) {
+                                WebAppDisclaimerAlert.show(getContext(), (allowSendMessage) -> {
+                                    TLRPC.TL_messages_toggleBotInAttachMenu botRequest = new TLRPC.TL_messages_toggleBotInAttachMenu();
+                                    botRequest.bot = MessagesController.getInstance(currentAccount).getInputUser(attachMenuBot.bot_id);
+                                    botRequest.enabled = true;
+                                    botRequest.write_allowed = true;
+                                    ConnectionsManager.getInstance(currentAccount).sendRequest(botRequest, (response2, error2) -> AndroidUtilities.runOnUIThread(() -> {
+                                        attachMenuBot.inactive = attachMenuBot.side_menu_disclaimer_needed = false;
+                                        LaunchActivity.showAttachMenuBot(launchActivity, currentAccount, attachMenuBot, null, true);
+                                        MediaDataController.getInstance(currentAccount).updateAttachMenuBotsInCache();
+                                    }), ConnectionsManager.RequestFlagInvokeAfter | ConnectionsManager.RequestFlagFailOnServerErrors);
+                                }, null, null);
+                            } else {
+                                LaunchActivity.showAttachMenuBot(launchActivity, currentAccount, attachMenuBot, null, true);
+                            }
+                        }, () -> BotWebViewSheet.deleteBot(currentAccount, attachMenuBot.bot_id, null));
+                    }
                 }
             }
         }
@@ -14360,7 +14608,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         final TextView textView = new TextView(getContext());
         textView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
         textView.setTextColor(getThemedColor(Theme.key_dialogTextBlack));
-        textView.setText(UserObject.getUserName(user));
+        textView.setText(org.nayagram.platform.security.NGHiddenAccounts.withHiddenMark(account, UserObject.getUserName(user)));
         textView.setMaxLines(2);
         textView.setEllipsize(TextUtils.TruncateAt.END);
         btn.addView(textView, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, Gravity.CENTER_VERTICAL, 13, 0, 14, 0));
@@ -14373,7 +14621,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
         accountNumbers.clear();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            if (UserConfig.getInstance(a).isClientActivated()) {
+            if (org.nayagram.platform.security.NGHiddenAccounts.isListed(a)) {
                 accountNumbers.add(a);
             }
         }

@@ -137,7 +137,6 @@ import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.MessagesStorage;
 import org.telegram.messenger.NotificationCenter;
-import org.telegram.messenger.PasskeysController;
 import org.telegram.messenger.PushListenerController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SRPHelper;
@@ -1643,6 +1642,25 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         onAuthSuccess(res);
     }
 
+    public void showLoginProgress() {
+        needShowProgress(0);
+    }
+
+    public void hideLoginProgress() {
+        needHideProgress(false);
+    }
+
+    public void handleBotAuthSuccess(TLRPC.TL_auth_authorization res, String token) {
+        onAuthSuccess(res);
+        if (res != null && res.user != null) {
+            org.nayagram.platform.auth.NGBotSessionManager.saveBotSession(currentAccount, token, res.user);
+        }
+    }
+
+    public void handleBotAuthSuccess(TLRPC.TL_auth_authorization res) {
+        handleBotAuthSuccess(res, null);
+    }
+
     private void onAuthSuccess(TLRPC.TL_auth_authorization res) {
         onAuthSuccess(res, false);
     }
@@ -2473,6 +2491,21 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                         BulletinFactory.of(slideViewsContainer, null).createSimpleBulletin(R.raw.contacts_sync_off, getString("SyncContactsOff", R.string.SyncContactsOff)).show();
                     }
                 });
+
+                TextView botLoginButton = new TextView(context);
+                botLoginButton.setText(getString("LogInWithBotToken", R.string.LogInWithBotToken));
+                botLoginButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+                botLoginButton.setTypeface(AndroidUtilities.getTypeface("fonts/rmedium.ttf"));
+                botLoginButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+                botLoginButton.setGravity(Gravity.CENTER);
+                botLoginButton.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(14), AndroidUtilities.dp(16), AndroidUtilities.dp(14));
+                botLoginButton.setMinimumHeight(AndroidUtilities.dp(48));
+                botLoginButton.setContentDescription(getString("LogInWithBotToken", R.string.LogInWithBotToken));
+                botLoginButton.setFocusable(true);
+                botLoginButton.setBackground(Theme.createRadSelectorDrawable(Theme.getColor(Theme.key_listSelector), AndroidUtilities.dp(8), AndroidUtilities.dp(8)));
+                botLoginButton.setOnClickListener(v -> org.nayagram.platform.auth.NGBotLoginHelper.showBotLoginDialog(LoginActivity.this, currentAccount));
+                addView(botLoginButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 16, 6, 16, 0));
+                bottomMargin -= 28;
             }
 
             final boolean allowTestBackend = (BuildVars.DEBUG_VERSION || TEST_BACKEND_IN_STORE) || getConnectionsManager().isTestBackend();
@@ -3058,6 +3091,10 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                         String userPhone = userConfig.getCurrentUser().phone;
                         if (PhoneNumberUtils.compare(phone, userPhone) && ConnectionsManager.getInstance(a).isTestBackend() == testBackend) {
                             final int num = a;
+                            if (org.nayagram.platform.security.NGHiddenAccounts.openFromLogin(LoginActivity.this, num)) {
+                                needHideProgress(false);
+                                return;
+                            }
                             AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
                             builder.setTitle(getString(R.string.AppName));
                             builder.setMessage(getString("AccountAlreadyLoggedIn", R.string.AccountAlreadyLoggedIn));
@@ -3392,87 +3429,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                         }
                     }
                 }
-                if (activityMode == MODE_LOGIN) {
-                    requestPasskey(false);
-                }
             }, SHOW_DELAY);
-        }
-
-        @Override
-        public void onDestroyActivity() {
-            super.onDestroyActivity();
-            if (cancelRequestingPasskey != null) {
-                cancelRequestingPasskey.run();
-                cancelRequestingPasskey = null;
-            }
-        }
-
-        private boolean requestedPasskey = false;
-        private boolean requestingPasskey = false;
-        private Runnable cancelRequestingPasskey;
-        private void requestPasskey(boolean clickedButton) {
-            if (activityMode != MODE_LOGIN) return;
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || !BuildVars.SUPPORTS_PASSKEYS) return;
-            if (requestingPasskey || !clickedButton && requestedPasskey) return;
-
-            requestingPasskey = true;
-            requestedPasskey = true;
-            cancelRequestingPasskey = PasskeysController.login(getContext(), currentAccount, clickedButton, (userId, authObject, err) -> {
-                cancelRequestingPasskey = null;
-                requestingPasskey = false;
-                if (err != null && ("EMPTY".equals(err) || "CANCELLED".equals(err))) {
-                    if (subtitleView != null && "CANCELLED".equals(err)) {
-                        subtitleView.setText(AndroidUtilities.replaceArrows(AndroidUtilities.replaceSingleTag(getString(R.string.StartTextPasskey), () -> {
-                            requestPasskey(true);
-                        }), true));
-                    }
-                    return;
-                }
-                if (userId != 0 && getParentActivity() instanceof LaunchActivity) {
-                    for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-                        UserConfig userConfig = UserConfig.getInstance(a);
-                        if (!userConfig.isClientActivated()) {
-                            continue;
-                        }
-                        if (userConfig.getClientUserId() == userId && ConnectionsManager.getInstance(a).isTestBackend() == testBackend) {
-                            if (UserConfig.selectedAccount != a) {
-                                ((LaunchActivity) getParentActivity()).switchToAccount(a, true);
-                            }
-                            finishFragment();
-                            needHideProgress(false);
-                            return;
-                        }
-                    }
-                }
-                if (err != null && err.contains("SESSION_PASSWORD_NEEDED")) {
-                    final TL_account.getPassword req2 = new TL_account.getPassword();
-                    ConnectionsManager.getInstance(currentAccount).sendRequest(req2, (response1, error1) -> AndroidUtilities.runOnUIThread(() -> {
-                        nextPressed = false;
-                        showDoneButton(false, true);
-                        if (error1 == null) {
-                            final TL_account.Password password = (TL_account.Password) response1;
-                            if (!TwoStepVerificationActivity.canHandleCurrentPassword(password, true)) {
-                                AlertsCreator.showUpdateAppAlert(getParentActivity(), getString("UpdateAppAlert", R.string.UpdateAppAlert), true);
-                                return;
-                            }
-                            final Bundle bundle = new Bundle();
-                            final SerializedData data = new SerializedData(password.getObjectSize());
-                            password.serializeToStream(data);
-                            bundle.putString("password", Utilities.bytesToHex(data.toByteArray()));
-                            setPage(VIEW_PASSWORD, true, bundle, false);
-                        } else {
-                            needShowAlert(getString(R.string.RestorePasswordNoEmailTitle), error1.text);
-                        }
-                    }), ConnectionsManager.RequestFlagFailOnServerErrors | ConnectionsManager.RequestFlagWithoutLogin);
-                } else if (err != null) {
-                    if (BuildVars.DEBUG_VERSION)
-                        BulletinFactory.of(LoginActivity.this).showForError(err);
-                    return;
-                }
-                if (authObject instanceof TLRPC.TL_auth_authorization) {
-                    onAuthSuccess((TLRPC.TL_auth_authorization) authObject);
-                }
-            });
         }
 
         @Override
@@ -3727,7 +3684,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 innerLinearLayout.addView(frameLayout, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
 
                 blueImageView = new RLottieImageView(context);
-                hintDrawable = new RLottieDrawable(R.raw.phone_flash_call, String.valueOf(R.raw.phone_flash_call), AndroidUtilities.dp(64), AndroidUtilities.dp(64), true, null);
+                hintDrawable = new RLottieDrawable(R.raw.phone_flash_call, AndroidUtilities.dp(64), AndroidUtilities.dp(64), true, null);
                 blueImageView.setAnimation(hintDrawable);
                 frameLayout.addView(blueImageView, LayoutHelper.createFrame(64, 64));
 
@@ -3742,13 +3699,13 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
                 int size = currentType == AUTH_TYPE_MESSAGE ? 128 : 64;
                 if (currentType == AUTH_TYPE_MESSAGE) {
-                    hintDrawable = new RLottieDrawable(R.raw.code_laptop, String.valueOf(R.raw.code_laptop), AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
+                    hintDrawable = new RLottieDrawable(R.raw.code_laptop, AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
                 } else {
-                    hintDrawable = new RLottieDrawable(R.raw.sms_incoming_info, String.valueOf(R.raw.sms_incoming_info), AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
+                    hintDrawable = new RLottieDrawable(R.raw.sms_incoming_info, AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
 
-                    starsToDotsDrawable = new RLottieDrawable(R.raw.phone_stars_to_dots, String.valueOf(R.raw.phone_stars_to_dots), AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
-                    dotsDrawable = new RLottieDrawable(R.raw.phone_dots, String.valueOf(R.raw.phone_dots), AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
-                    dotsToStarsDrawable = new RLottieDrawable(R.raw.phone_dots_to_stars, String.valueOf(R.raw.phone_dots_to_stars), AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
+                    starsToDotsDrawable = new RLottieDrawable(R.raw.phone_stars_to_dots, AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
+                    dotsDrawable = new RLottieDrawable(R.raw.phone_dots, AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
+                    dotsToStarsDrawable = new RLottieDrawable(R.raw.phone_dots_to_stars, AndroidUtilities.dp(size), AndroidUtilities.dp(size), true, null);
                 }
                 blueImageView = new RLottieImageView(context);
                 blueImageView.setAnimation(hintDrawable);
@@ -4181,13 +4138,25 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 nextPressed = false;
                 if (error == null) {
                     nextCodeParams = params;
-                    nextCodeAuth = (TLRPC.TL_auth_sentCode) response;
-                    if (nextCodeAuth.type instanceof TLRPC.TL_auth_sentCodeTypeSmsPhrase) {
-                        nextType = AUTH_TYPE_PHRASE;
-                    } else if (nextCodeAuth.type instanceof TLRPC.TL_auth_sentCodeTypeSmsWord) {
-                        nextType = AUTH_TYPE_WORD;
+                    if (response instanceof TLRPC.TL_auth_sentCode) {
+                        nextCodeAuth = (TLRPC.TL_auth_sentCode) response;
+                        if (nextCodeAuth.type instanceof TLRPC.TL_auth_sentCodeTypeSmsPhrase) {
+                            nextType = AUTH_TYPE_PHRASE;
+                        } else if (nextCodeAuth.type instanceof TLRPC.TL_auth_sentCodeTypeSmsWord) {
+                            nextType = AUTH_TYPE_WORD;
+                        }
+                        fillNextCodeParams(nextCodeParams, nextCodeAuth);
+                    } else if (response instanceof TLRPC.TL_auth_sentCodePaymentRequired) {
+                        final TLRPC.TL_auth_sentCodePaymentRequired auth = (TLRPC.TL_auth_sentCodePaymentRequired) response;
+                        params.putString("product", auth.store_product);
+                        params.putString("phoneHash", auth.phone_code_hash);
+                        params.putString("support_email_address", auth.support_email_address);
+                        params.putString("support_email_subject", auth.support_email_subject);
+                        params.putString("currency", auth.currency);
+                        params.putInt("premium_days", auth.premium_days);
+                        params.putLong("amount", auth.amount);
+                        setPage(VIEW_PAY, true, params, true);
                     }
-                    fillNextCodeParams(nextCodeParams, nextCodeAuth);
                 } else {
                     if (error.text != null) {
                         if (error.text.contains("PHONE_NUMBER_INVALID")) {
@@ -5964,7 +5933,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             signInWithGoogleView.setMaxLines(2);
 
             SpannableStringBuilder str = new SpannableStringBuilder("d ");
-            Drawable dr = ContextCompat.getDrawable(context, R.drawable.googleg_standard_color_18);
+            Drawable dr = ContextCompat.getDrawable(context, com.google.android.gms.base.R.drawable.googleg_standard_color_18);
             dr.setBounds(0, AndroidUtilities.dp(9), AndroidUtilities.dp(18), AndroidUtilities.dp(18 + 9));
             str.setSpan(new ImageSpan(dr, ImageSpan.ALIGN_BOTTOM), 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             str.setSpan(new ReplacementSpan() {
@@ -6310,7 +6279,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             signInWithGoogleView.setMaxLines(2);
 
             SpannableStringBuilder str = new SpannableStringBuilder("d ");
-            Drawable dr = ContextCompat.getDrawable(context, R.drawable.googleg_standard_color_18);
+            Drawable dr = ContextCompat.getDrawable(context, com.google.android.gms.base.R.drawable.googleg_standard_color_18);
             dr.setBounds(0, AndroidUtilities.dp(9), AndroidUtilities.dp(18), AndroidUtilities.dp(18 + 9));
             str.setSpan(new ImageSpan(dr, ImageSpan.ALIGN_BOTTOM), 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             str.setSpan(new ReplacementSpan() {
@@ -6929,6 +6898,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                         } else if (error.text.contains("CODE_EMPTY") || error.text.contains("CODE_INVALID") || error.text.contains("EMAIL_CODE_INVALID") || error.text.contains("PHONE_CODE_INVALID")) {
                             shakeWrongCode();
                             isWrongCode = true;
+                        } else if (error.text.contains("EMAIL_NOT_ALLOWED")) {
+                            needShowAlert(getString(R.string.RestorePasswordNoEmailTitle), getString(R.string.EmailNotAllowed));
                         } else if (error.text.contains("EMAIL_TOKEN_INVALID")) {
                             needShowAlert(getString(R.string.RestorePasswordNoEmailTitle), getString(R.string.EmailTokenInvalid));
                         } else if (error.text.contains("EMAIL_VERIFY_EXPIRED")) {
@@ -7873,8 +7844,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 avatarEditor.playAnimation();
             });
 
-            cameraDrawable = new RLottieDrawable(R.raw.camera, String.valueOf(R.raw.camera), AndroidUtilities.dp(70), AndroidUtilities.dp(70), false, null);
-            cameraWaitDrawable = new RLottieDrawable(R.raw.camera_wait, String.valueOf(R.raw.camera_wait), AndroidUtilities.dp(70), AndroidUtilities.dp(70), false, null);
+            cameraDrawable = new RLottieDrawable(R.raw.camera, AndroidUtilities.dp(70), AndroidUtilities.dp(70), false, null);
+            cameraWaitDrawable = new RLottieDrawable(R.raw.camera_wait, AndroidUtilities.dp(70), AndroidUtilities.dp(70), false, null);
 
             avatarEditor = new RLottieImageView(context) {
                 @Override

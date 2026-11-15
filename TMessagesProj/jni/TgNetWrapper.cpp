@@ -15,6 +15,11 @@
 
 JavaVM *java;
 
+// Forward declarations: callback implementations below use these helpers.
+static JNIEnv *ngEnvFor(int32_t instanceNum);
+static void ngClear(JNIEnv *env);
+static bool ngBegin(JNIEnv *env, jmethodID method);
+
 jclass jclass_RequestTimeDelegate;
 jmethodID jclass_RequestTimeDelegate_run;
 
@@ -106,10 +111,15 @@ jint getTimeDifference(JNIEnv *env, jclass c, jint instanceNum) {
     return ConnectionsManager::getInstance(instanceNum).getTimeDifference();
 }
 
-void sendRequest(JNIEnv *env, jclass c, jint instanceNum, jlong object, jint flags, jint datacenterId, jint connectionType, jboolean immediate, jint token) {
+void sendRequest(JNIEnv *env, jclass c, jint instanceNum, jlong object, jint flags, jint datacenterId, jint connectionType, jboolean immediate, jint token, jint downloadSize) {
     TL_api_request *request = new TL_api_request();
     request->request = (NativeByteBuffer *) (intptr_t) object;
+    request->downloadSize = downloadSize > 0 ? (uint32_t) downloadSize : 0;
     ConnectionsManager::getInstance(instanceNum).sendRequest(request, ([instanceNum, token](TLObject *response, TL_error *error, int32_t networkType, int64_t responseTime, int64_t msgId, int32_t dcId) {
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onRequestComplete)) {
+            return;
+        }
         TL_api_response *resp = (TL_api_response *) response;
         jlong ptr = 0;
         jint errorCode = 0;
@@ -121,27 +131,49 @@ void sendRequest(JNIEnv *env, jclass c, jint instanceNum, jlong object, jint fla
             const char *text = error->text.c_str();
             size_t size = error->text.size();
             if (check_utf8(text, size)) {
-                errorText = jniEnv[instanceNum]->NewStringUTF(text);
+                errorText = env->NewStringUTF(text);
             } else {
-                errorText = jniEnv[instanceNum]->NewStringUTF("UTF-8 ERROR");
+                errorText = env->NewStringUTF("UTF-8 ERROR");
             }
+            ngClear(env);
         }
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestComplete, instanceNum, token, ptr, errorCode, errorText, networkType, responseTime, msgId, dcId);
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestComplete, instanceNum, token, ptr, errorCode, errorText, networkType, responseTime, msgId, dcId);
+        ngClear(env);
         if (errorText != nullptr) {
-            jniEnv[instanceNum]->DeleteLocalRef(errorText);
+            env->DeleteLocalRef(errorText);
         }
     }), ([instanceNum, token] {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestQuickAck, instanceNum, token);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onRequestQuickAck)) {
+            return;
+        }
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestQuickAck, instanceNum, token);
+        ngClear(env);
     }), ([instanceNum, token] {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestWriteToSocket, instanceNum, token);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onRequestWriteToSocket)) {
+            return;
+        }
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestWriteToSocket, instanceNum, token);
+        ngClear(env);
     }), ([instanceNum, token] {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestClear, instanceNum, token, false);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onRequestClear)) {
+            return;
+        }
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestClear, instanceNum, token, false);
+        ngClear(env);
     }), (uint32_t) flags, (uint32_t) datacenterId, (ConnectionType) connectionType, immediate, token);
 }
 
 void cancelRequest(JNIEnv *env, jclass c, jint instanceNum, jint token, jboolean notifyServer) {
     return ConnectionsManager::getInstance(instanceNum).cancelRequest(token, notifyServer, ([instanceNum, token]() -> void {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestClear, instanceNum, token, true);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onRequestClear)) {
+            return;
+        }
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestClear, instanceNum, token, true);
+        ngClear(env);
     }));
 }
 
@@ -311,7 +343,11 @@ jlong checkProxy(JNIEnv *env, jclass c, jint instanceNum, jstring address, jint 
 
     jlong result = ConnectionsManager::getInstance(instanceNum).checkProxy(addressStr, (uint16_t) port, usernameStr, passwordStr, secretStr, [instanceNum, requestTimeFunc](int64_t time) {
         if (requestTimeFunc != nullptr) {
-            jniEnv[instanceNum]->CallVoidMethod(requestTimeFunc, jclass_RequestTimeDelegate_run, time);
+            JNIEnv *env = ngEnvFor(instanceNum);
+            if (ngBegin(env, jclass_RequestTimeDelegate_run)) {
+                env->CallVoidMethod(requestTimeFunc, jclass_RequestTimeDelegate_run, time);
+                ngClear(env);
+            }
         }
     }, requestTimeFunc);
 
@@ -331,86 +367,171 @@ jlong checkProxy(JNIEnv *env, jclass c, jint instanceNum, jstring address, jint 
     return result;
 }
 
+
+static JNIEnv *ngEnvFor(int32_t instanceNum) {
+    if (instanceNum < 0 || instanceNum >= MAX_ACCOUNT_COUNT) {
+        return nullptr;
+    }
+    return jniEnv[instanceNum];
+}
+
+static void ngClear(JNIEnv *env) {
+    if (env != nullptr && env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+}
+
+// Android 11 aborts inside Call*Method if a pending exception is already
+// set, or if the jmethodID is null (fault address 0x4). Clear first, skip
+// a missing method. This does not swallow an exception from the call itself
+// until ngClear runs after it returns.
+static bool ngBegin(JNIEnv *env, jmethodID method) {
+    if (env == nullptr || method == nullptr) {
+        return false;
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    return true;
+}
+
 class Delegate : public ConnectiosManagerDelegate {
     
     void onUpdate(int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onUpdate, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onUpdate)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onUpdate, instanceNum);
+        ngClear(env);
     }
     
     void onSessionCreated(int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onSessionCreated, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onSessionCreated)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onSessionCreated, instanceNum);
+        ngClear(env);
     }
     
     void onConnectionStateChanged(ConnectionState state, int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onConnectionStateChanged, state, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onConnectionStateChanged)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onConnectionStateChanged, state, instanceNum);
+        ngClear(env);
     }
     
     void onUnparsedMessageReceived(int64_t reqMessageId, NativeByteBuffer *buffer, ConnectionType connectionType, int32_t instanceNum) {
         if (connectionType == ConnectionTypeGeneric) {
-            jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onUnparsedMessageReceived, (jlong) (intptr_t) buffer, instanceNum, reqMessageId);
+            JNIEnv *env = ngEnvFor(instanceNum);
+            if (!ngBegin(env, jclass_ConnectionsManager_onUnparsedMessageReceived)) return;
+            env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onUnparsedMessageReceived, (jlong) (intptr_t) buffer, instanceNum, reqMessageId);
+            ngClear(env);
         }
     }
     
     void onLogout(int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onLogout, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onLogout)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onLogout, instanceNum);
+        ngClear(env);
     }
     
     void onUpdateConfig(TL_config *config, int32_t instanceNum) {
         NativeByteBuffer *buffer = BuffersStorage::getInstance().getFreeBuffer(config->getObjectSize());
         config->serializeToStream(buffer);
         buffer->position(0);
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onUpdateConfig, (jlong) (intptr_t) buffer, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (ngBegin(env, jclass_ConnectionsManager_onUpdateConfig)) {
+            env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onUpdateConfig, (jlong) (intptr_t) buffer, instanceNum);
+            ngClear(env);
+        }
         buffer->reuse();
     }
     
     void onInternalPushReceived(int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onInternalPushReceived, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onInternalPushReceived)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onInternalPushReceived, instanceNum);
+        ngClear(env);
     }
 
     void onBytesReceived(int32_t amount, int32_t networkType, int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onBytesReceived, amount, networkType, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onBytesReceived)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onBytesReceived, amount, networkType, instanceNum);
+        ngClear(env);
     }
 
     void onBytesSent(int32_t amount, int32_t networkType, int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onBytesSent, amount, networkType, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onBytesSent)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onBytesSent, amount, networkType, instanceNum);
+        ngClear(env);
     }
 
     void onRequestNewServerIpAndPort(int32_t second, int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestNewServerIpAndPort, second, instanceNum);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onRequestNewServerIpAndPort)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onRequestNewServerIpAndPort, second, instanceNum);
+        ngClear(env);
     }
 
     void onProxyError(int32_t instanceNum) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onProxyError);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onProxyError)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onProxyError);
+        ngClear(env);
     }
 
     void getHostByName(std::string domain, int32_t instanceNum, ConnectionSocket *socket) {
-        jstring domainName = jniEnv[instanceNum]->NewStringUTF(domain.c_str());
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_getHostByName, domainName, (jlong) (intptr_t) socket);
-        jniEnv[instanceNum]->DeleteLocalRef(domainName);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_getHostByName)) return;
+        jstring domainName = env->NewStringUTF(domain.c_str());
+        ngClear(env);
+        if (domainName == nullptr) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_getHostByName, domainName, (jlong) (intptr_t) socket);
+        ngClear(env);
+        env->DeleteLocalRef(domainName);
     }
 
     int32_t getInitFlags(int32_t instanceNum) {
-        return (int32_t) jniEnv[instanceNum]->CallStaticIntMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_getInitFlags);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_getInitFlags)) return 0;
+        int32_t flags = (int32_t) env->CallStaticIntMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_getInitFlags);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            return 0;
+        }
+        return flags;
     }
 
     void onPremiumFloodWait(int32_t instanceNum, int32_t requestToken, bool isUpload) {
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onPremiumFloodWait, instanceNum, requestToken, isUpload);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onPremiumFloodWait)) return;
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onPremiumFloodWait, instanceNum, requestToken, isUpload);
+        ngClear(env);
     }
 
     void onIntegrityCheckClassic(int32_t instanceNum, int32_t requestToken, std::string project, std::string nonce) {
-        jstring projectStr = jniEnv[instanceNum]->NewStringUTF(project.c_str());
-        jstring nonceStr = jniEnv[instanceNum]->NewStringUTF(nonce.c_str());
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onIntegrityCheckClassic, instanceNum, requestToken, projectStr, nonceStr);
-        jniEnv[instanceNum]->DeleteLocalRef(projectStr);
-        jniEnv[instanceNum]->DeleteLocalRef(nonceStr);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onIntegrityCheckClassic)) return;
+        jstring projectStr = env->NewStringUTF(project.c_str());
+        jstring nonceStr = env->NewStringUTF(nonce.c_str());
+        ngClear(env);
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onIntegrityCheckClassic, instanceNum, requestToken, projectStr, nonceStr);
+        ngClear(env);
+        if (projectStr != nullptr) env->DeleteLocalRef(projectStr);
+        if (nonceStr != nullptr) env->DeleteLocalRef(nonceStr);
     }
 
     void onCaptchaCheck(int32_t instanceNum, int32_t requestToken, std::string action, std::string key_id) {
-        jstring actionStr = jniEnv[instanceNum]->NewStringUTF(action.c_str());
-        jstring keyIdStr = jniEnv[instanceNum]->NewStringUTF(key_id.c_str());
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onCaptchaCheck, instanceNum, requestToken, actionStr, keyIdStr);
-        jniEnv[instanceNum]->DeleteLocalRef(actionStr);
-        jniEnv[instanceNum]->DeleteLocalRef(keyIdStr);
+        JNIEnv *env = ngEnvFor(instanceNum);
+        if (!ngBegin(env, jclass_ConnectionsManager_onCaptchaCheck)) return;
+        jstring actionStr = env->NewStringUTF(action.c_str());
+        jstring keyIdStr = env->NewStringUTF(key_id.c_str());
+        ngClear(env);
+        env->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onCaptchaCheck, instanceNum, requestToken, actionStr, keyIdStr);
+        ngClear(env);
+        if (actionStr != nullptr) env->DeleteLocalRef(actionStr);
+        if (keyIdStr != nullptr) env->DeleteLocalRef(keyIdStr);
     }
 
 };
@@ -530,7 +651,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
         {"native_getCurrentAuthKeyId", "(I)J", (void *) getCurrentAuthKeyId},
         {"native_isTestBackend", "(I)I", (void *) isTestBackend},
         {"native_getTimeDifference", "(I)I", (void *) getTimeDifference},
-        {"native_sendRequest", "(IJIIIZI)V", (void *) sendRequest},
+        {"native_sendRequest", "(IJIIIZII)V", (void *) sendRequest},
         {"native_cancelRequest", "(IIZ)V", (void *) cancelRequest},
         {"native_cleanUp", "(IZ)V", (void *) cleanUp},
         {"native_cancelRequestsForGuid", "(II)V", (void *) cancelRequestsForGuid},

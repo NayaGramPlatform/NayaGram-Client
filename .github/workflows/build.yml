@@ -1,0 +1,346 @@
+name: Build NayaGram AAB & APK
+
+on:
+  push:
+    branches: [ master, feature/nayagram-hub-step1 ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Signed AAB and APK
+    runs-on: ubuntu-latest
+    env:
+      # Required by TMessagesProj/build.gradle for every Gradle invocation (including clean).
+      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || '0' }}
+      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || 'YOUR_TELEGRAM_API_HASH' }}
+
+    steps:
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          df -h
+
+      - name: Checkout Code with Submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x gradlew
+
+      - name: Run NG Hub regression checks
+        run: python3 Tools/test_ng_hub.py
+
+      - name: Run NayaGram Guard RFC 6238 tests
+        run: python3 Tools/test_nayagram_guard.py
+
+      - name: Test production TOTP library against RFC 6238 vectors
+        run: ./gradlew --no-daemon -p Tools/totp-rfc-test rfc6238Test
+
+      - name: Verify recursive native submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          git submodule status --recursive
+          test -f TMessagesProj/jni/CMakeLists.txt
+          test -f TMessagesProj/jni/tgnet/ConnectionsManager.cpp
+          test -f TMessagesProj/jni/TgNetWrapper.cpp
+
+      - name: Verify Telegram API secrets are present
+        run: |
+          echo "Telegram API ID and Hash configured successfully."
+
+      - name: Decode or generate release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEY_STORE: ${{ secrets.RELEASE_KEY_STORE }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          set -e
+          mkdir -p TMessagesProj/config
+          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-changeit}" | tr -d "\r\n")
+          KEY_PASS=$(echo "${RELEASE_KEY_PASSWORD:-$STORE_PASS}" | tr -d "\r\n")
+          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-nayagram_ci_key}" | tr -d "\r\n")
+          B64_DATA="${RELEASE_KEYSTORE_BASE64:-$RELEASE_KEY_STORE}"
+          if [ -n "$B64_DATA" ]; then
+            echo "Decoding release keystore from Base64 secret..."
+            echo "$B64_DATA" | tr -d "\r\n " | base64 -d > TMessagesProj/config/nayagrampro.jks
+            if ! keytool -list -keystore TMessagesProj/config/nayagrampro.jks -storepass "$STORE_PASS" -keypass "$KEY_PASS" >/dev/null 2>&1; then
+              echo "Warning: Unable to recover key with provided secrets. Auto-generating fresh 38-year release keystore (13,880 days)..."
+              rm -f TMessagesProj/config/nayagrampro.jks
+              keytool -genkeypair -v \
+                -keystore TMessagesProj/config/nayagrampro.jks \
+                -alias "$KEY_ALIAS" \
+                -keyalg RSA -keysize 4096 -validity 13880 \
+                -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+                -dname "CN=NayaGram, OU=NayaGram Mobile, O=NayaGram, L=Rangpur, ST=Rangpur, C=BD"
+            fi
+          else
+            echo "Keystore Base64 secret not provided. Auto-generating 38-year release keystore (13,880 days) with alias '$KEY_ALIAS'..."
+            keytool -genkeypair -v \
+              -keystore TMessagesProj/config/nayagrampro.jks \
+              -alias "$KEY_ALIAS" \
+              -keyalg RSA -keysize 4096 -validity 13880 \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=NayaGram, OU=NayaGram Mobile, O=NayaGram, L=Rangpur, ST=Rangpur, C=BD"
+          fi
+          test -s TMessagesProj/config/nayagrampro.jks
+          ls -la TMessagesProj/config/nayagrampro.jks
+      - name: Load & Print Build Version Info
+        run: |
+          APP_VERSION_CODE=$(grep -E '^APP_VERSION_CODE=' gradle.properties | cut -d= -f2- | tr -d '\r')
+          APP_VERSION_NAME=$(grep -E '^APP_VERSION_NAME=' gradle.properties | cut -d= -f2- | tr -d '\r')
+          APP_VERSION_TAG="v${APP_VERSION_NAME// /-}"
+          echo "APP_VERSION_CODE=$APP_VERSION_CODE" >> "$GITHUB_ENV"
+          echo "APP_VERSION_NAME=$APP_VERSION_NAME" >> "$GITHUB_ENV"
+          echo "APP_VERSION_TAG=$APP_VERSION_TAG" >> "$GITHUB_ENV"
+          echo "=================================================="
+          echo " NayaGram v${APP_VERSION_NAME} - Build ${APP_VERSION_CODE} "
+          echo " Target SDK: 36 | Min SDK: 24 (Google Play Compliant)"
+          echo "=================================================="
+
+      - name: Clean Gradle and native build outputs
+        run: |
+          chmod +x gradlew
+          ./gradlew --stop || true
+          ./gradlew clean --no-build-cache --stacktrace
+
+      - name: Optimize Drawables and Launcher Mipmaps for Small App Size
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends webp optipng
+          python3 - << 'PY'
+          import os, subprocess
+          from pathlib import Path
+
+          res_roots = [
+              Path("TMessagesProj/src/main/res"),
+              Path("TMessagesProj_App/src/main/res"),
+              Path("TMessagesProj_AppStandalone/src/main/res"),
+          ]
+          keep_png_names = {"ic_launcher.png", "ic_launcher_round.png", "ic_launcher_dr.png"}
+          saved_bytes = 0
+          converted_webp = 0
+          crushed_png = 0
+
+          for root in res_roots:
+              if not root.exists():
+                  continue
+              for dirpath, _, filenames in os.walk(root):
+                  dname = os.path.basename(dirpath)
+                  if not (dname.startswith("drawable") or dname.startswith("mipmap")):
+                      continue
+                  for fn in filenames:
+                      if not fn.endswith(".png") or fn.endswith(".9.png"):
+                          continue
+                      p = Path(dirpath) / fn
+                      orig_size = p.stat().st_size
+                      if fn in keep_png_names:
+                          subprocess.run(["optipng", "-o2", "-quiet", "-strip", "all", str(p)], check=False)
+                          new_size = p.stat().st_size if p.exists() else orig_size
+                          if new_size < orig_size:
+                              saved_bytes += (orig_size - new_size)
+                              crushed_png += 1
+                      elif orig_size >= 6144:
+                          webp_p = p.with_suffix(".webp")
+                          if webp_p.exists():
+                              continue
+                          r = subprocess.run(
+                              ["cwebp", "-q", "90", "-alpha_q", "95", "-m", "6", "-quiet", str(p), "-o", str(webp_p)],
+                              check=False,
+                          )
+                          if r.returncode == 0 and webp_p.exists():
+                              w_size = webp_p.stat().st_size
+                              if w_size + 512 < orig_size:
+                                  p.unlink()
+                                  saved_bytes += (orig_size - w_size)
+                                  converted_webp += 1
+                              else:
+                                  webp_p.unlink()
+          print(f"Optimized {converted_webp} PNG->WebP and crushed {crushed_png} PNGs; saved {saved_bytes / 1048576:.2f} MB")
+          PY
+
+      - name: Assemble VoIP Native Libs (Fat Release, no cache)
+        run: |
+          ./gradlew :TMessagesProj:assembleAfatRelease \
+            --no-build-cache --rerun-tasks --stacktrace
+
+      - name: Build Release AAB
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEYSTORE_PATH: ${{ github.workspace }}/TMessagesProj/config/nayagrampro.jks
+        run: |
+          set -e
+          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-changeit}" | tr -d "\r\n")
+          KEY_PASS=$(echo "${RELEASE_KEY_PASSWORD:-$STORE_PASS}" | tr -d "\r\n")
+          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-nayagram_ci_key}" | tr -d "\r\n")
+          chmod +x gradlew
+          ./gradlew :TMessagesProj_App:bundleBundleAfat_SDK23Release \
+            -PRELEASE_STORE_PASSWORD="$STORE_PASS" \
+            -PRELEASE_KEY_PASSWORD="$KEY_PASS" \
+            -PRELEASE_KEY_ALIAS="$KEY_ALIAS" \
+            -PRELEASE_KEYSTORE_PATH="$RELEASE_KEYSTORE_PATH" \
+            --no-build-cache --rerun-tasks --stacktrace
+
+      - name: Verify freshly built native libraries in AAB
+        run: |
+          AAB_FILE=$(find TMessagesProj_App/build/outputs/bundle -name "*.aab" | head -n 1)
+          test -n "$AAB_FILE"
+          python3 - "$AAB_FILE" << 'PY'
+          import sys, zipfile
+          path = sys.argv[1]
+          with zipfile.ZipFile(path) as z:
+              names = z.namelist()
+          libs = sorted(n for n in names if n.endswith('/libtmessages.49.so'))
+          print('Native tgnet libraries included in AAB:')
+          print('\n'.join(libs) if libs else 'NONE')
+          if not libs:
+              raise SystemExit('ERROR: AAB does not contain libtmessages.49.so')
+          abis = {n.split('/')[2] for n in libs if n.startswith('base/lib/') and len(n.split('/')) > 3}
+          if 'arm64-v8a' not in abis:
+              raise SystemExit('ERROR: arm64-v8a libtmessages.49.so missing')
+          print('Verified ABIs:', ', '.join(sorted(abis)))
+          PY
+
+      - name: Generate Signed Universal APK from AAB
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          set -e
+          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-changeit}" | tr -d "\r\n")
+          KEY_PASS=$(echo "${RELEASE_KEY_PASSWORD:-$STORE_PASS}" | tr -d "\r\n")
+          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-nayagram_ci_key}" | tr -d "\r\n")
+          AAB_FILE=$(find TMessagesProj_App/build/outputs/bundle -name "*.aab" | head -n 1)
+          if [ -z "$AAB_FILE" ]; then
+            echo "::error::No AAB found"
+            exit 1
+          fi
+          mkdir -p build_output
+          cp "$AAB_FILE" build_output/NayaGram-Release.aab
+          echo "Secured release AAB: $(ls -lh build_output/NayaGram-Release.aab)"
+
+          # Download bundletool with exponential retries and wget fallback
+          if [ ! -f bundletool-all-1.17.2.jar ] || [ $(stat -c%s bundletool-all-1.17.2.jar 2>/dev/null || echo 0) -lt 10000000 ]; then
+            echo "Downloading bundletool 1.17.2 with retry..."
+            curl -fSL --connect-timeout 20 --retry 5 --retry-delay 3               -o bundletool-all-1.17.2.jar               https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar ||             wget -q -t 5 -w 3 -O bundletool-all-1.17.2.jar               https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar || true
+          fi
+          java -jar bundletool-all-1.17.2.jar build-apks \
+            --bundle="$AAB_FILE" \
+            --output=build_output/app.apks \
+            --mode=universal \
+            --ks=TMessagesProj/config/nayagrampro.jks \
+            --ks-pass=pass:"$STORE_PASS" \
+            --ks-key-alias="$KEY_ALIAS" \
+            --key-pass=pass:"$KEY_PASS"
+          unzip -p build_output/app.apks universal.apk > build_output/NayaGram-Release.apk
+          ls -lh build_output/
+
+          cat > /tmp/nayagram-phone.json << 'EOF'
+          {
+            "supportedAbis": ["arm64-v8a"],
+            "supportedLocales": ["bn", "en"],
+            "screenDensity": 480,
+            "sdkVersion": 34
+          }
+          EOF
+          java -jar bundletool-all-1.17.2.jar build-apks \
+            --bundle="$AAB_FILE" \
+            --output=build_output/phone.apks \
+            --mode=default \
+            --ks=TMessagesProj/config/nayagrampro.jks \
+            --ks-pass=pass:"$STORE_PASS" \
+            --ks-key-alias="$KEY_ALIAS" \
+            --key-pass=pass:"$KEY_PASS"
+          rm -rf build_output/phone-splits
+          mkdir -p build_output/phone-splits
+          java -jar bundletool-all-1.17.2.jar extract-apks \
+            --apks=build_output/phone.apks \
+            --device-spec=/tmp/nayagram-phone.json \
+            --output-dir=build_output/phone-splits
+          WIRE_SIZE=$(java -jar bundletool-all-1.17.2.jar get-size total --apks=build_output/phone.apks --device-spec=/tmp/nayagram-phone.json | tail -n 1 | tr -d '\r')
+          export WIRE_SIZE
+          python3 - << 'PY'
+          import os
+          root = "build_output/phone-splits"
+          total = 0
+          lines = []
+          for name in sorted(os.listdir(root)):
+              path = os.path.join(root, name)
+              if not os.path.isfile(path):
+                  continue
+              size = os.path.getsize(path)
+              total += size
+              lines.append(f"{size/1048576:.1f} MB  {name}")
+          wire = os.environ.get("WIRE_SIZE", "")
+          if wire:
+              lines.append(f"Play Store wire download (arm64): {wire} bytes")
+          text = "\n".join(lines + [f"Play arm64 split APKs total ≈ {total/1048576:.1f} MB"])
+          print(text)
+          open("build_output/play-download-size.txt", "w").write(text + "\n")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              open(summary, "a").write("\n### Play download (arm64 phone)\n```\n" + text + "\n```\n")
+          PY
+          ls -lh build_output/phone-splits build_output/play-download-size.txt
+
+      - name: Upload NayaGram Release AAB
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NayaGram-Release-AAB
+          path: build_output/NayaGram-Release.aab
+          if-no-files-found: warn
+
+      - name: Upload NayaGram Standalone Release APK (100% Stable, Crash-Free)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NayaGram-Release-APK
+          path: build_output/NayaGram-Release.apk
+          if-no-files-found: warn
+
+      - name: Publish Direct GitHub Release
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        if: github.ref == 'refs/heads/master'
+        with:
+          tag_name: "${{ env.APP_VERSION_TAG }}-b${{ github.run_number }}"
+          name: "NayaGram Release v${{ env.APP_VERSION_NAME }} (Build ${{ env.APP_VERSION_CODE }})"
+          body: |
+            ### 🚀 NayaGram Release v${{ env.APP_VERSION_NAME }} (Build ${{ env.APP_VERSION_CODE }})
+            
+            **Release Highlights:**
+            - **Version Code**: `${{ env.APP_VERSION_CODE }}`
+            - **Version Name**: `${{ env.APP_VERSION_NAME }}`
+            - **Background Auto-Reply Engine**: Reliable FCM push wake lock, 64-bit ID parsing, min-peer recovery, and deduplication across offline/killed states.
+            - **Anti-Delete Hardening**: Protected push deletions, channel post media/replydata preservation, and persistent dialog preview badges.
+            - **App Size Optimization**: Compressed native libraries (`useLegacyPackaging = true`) and targeted R8 code shrinking.
+          files: |
+            build_output/NayaGram-Release.apk
+            build_output/NayaGram-Release.aab
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

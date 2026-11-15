@@ -23,6 +23,7 @@ import android.app.ActivityManager;
 import android.app.Dialog;
 import android.app.PictureInPictureParams;
 import android.app.PictureInPictureUiState;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -92,6 +93,11 @@ import com.google.firebase.appindexing.Action;
 import com.google.firebase.appindexing.FirebaseUserActions;
 import com.google.firebase.appindexing.builders.AssistActionBuilder;
 
+import org.nayagram.platform.ads.AdManager;
+import org.nayagram.platform.security.NGSafety;
+import org.nayagram.platform.security.NGSafetyActivity;
+import org.nayagram.platform.monetization.AdMobIntegrationManager;
+import org.telegram.messenger.NayaGramAdsConfig;
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
@@ -172,6 +178,7 @@ import org.telegram.ui.Cells.ChatMessageCell;
 import org.telegram.ui.Cells.LanguageCell;
 import org.telegram.ui.Components.ActivityWindowEmptyBackgroundDrawable;
 import org.telegram.ui.Components.AlertsCreator;
+import org.telegram.ui.Components.AnimatedEmojiDrawable;
 import org.telegram.ui.Components.AppIconBulletinLayout;
 import org.telegram.ui.Components.AttachBotIntroTopView;
 import org.telegram.ui.Components.AudioPlayerAlert;
@@ -231,6 +238,9 @@ import org.telegram.ui.Stories.recorder.StoryEntry;
 import org.telegram.ui.Stories.recorder.StoryRecorder;
 import org.telegram.ui.Stories.LiveStoryPipOverlay;
 import org.telegram.ui.TON.TONIntroActivity;
+import org.telegram.ui.Wallet.GramWalletStorageAuth;
+import org.telegram.ui.Wallet.WalletActivity;
+import org.telegram.ui.Wallet.WalletSendSelectSender;
 import org.telegram.ui.bots.BotWebViewAttachedSheet;
 import org.telegram.ui.bots.BotWebViewSheet;
 import org.telegram.ui.bots.WebViewRequestProps;
@@ -341,6 +351,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     private boolean passcodeSaveIntentIsNew;
     private boolean passcodeSaveIntentIsRestore;
 
+    private boolean biometricChatGatePending;
+    private long biometricChatGateDialogId;
+    private android.view.View biometricChatGateOverlay;
+
     private boolean tabletFullSize;
 
     private String loadingThemeFileName;
@@ -377,6 +391,14 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     private FlagSecureReason flagSecureReason;
     private final LiteMode.BatteryReceiver batteryReceiver = new LiteMode.BatteryReceiver();
+    private final BroadcastReceiver hiddenAccountsScreenReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent != null && Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                org.nayagram.platform.security.NGHiddenAccounts.onScreenOff();
+            }
+        }
+    };
     private WindowAnimatedInsetsProvider rootAnimatedInsetsListener;
 
     public static LaunchActivity instance;
@@ -407,8 +429,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         instance = this;
         ApplicationLoader.postInitApplication();
         AndroidUtilities.checkDisplaySize(this, getResources().getConfiguration());
+        org.nayagram.platform.security.NGHiddenAccounts.init();
+        org.nayagram.platform.security.NGHiddenAccounts.ensureSelectedVisible();
         currentAccount = UserConfig.selectedAccount;
         registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        registerReceiver(hiddenAccountsScreenReceiver, new IntentFilter(Intent.ACTION_SCREEN_OFF));
         if (!UserConfig.getInstance(currentAccount).isClientActivated()) {
             Intent intent = getIntent();
             boolean isProxy = false;
@@ -421,7 +446,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                     Uri uri = intent.getData();
                     if (uri != null) {
                         String url = uri.toString().toLowerCase();
-                        isProxy = url.startsWith("tg:proxy") || url.startsWith("tg://proxy") || url.startsWith("tg:socks") || url.startsWith("tg://socks");
+                        isProxy = url.startsWith("tg:proxy") || url.startsWith("tg://proxy")
+                                || url.startsWith("tg:webproxy") || url.startsWith("tg://webproxy")
+                                || url.startsWith("tg:socks") || url.startsWith("tg://socks");
                     }
                 }
             }
@@ -455,6 +482,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         frameLayout.setClipToPadding(false);
         frameLayout.setClipChildren(false);
         setContentView(frameLayout);
+        if (NayaGramAdsConfig.ENABLE_ADS) {
+            // Register only from a foreground Activity so UMP can present required consent UI.
+            AdManager.registerProvider(AdMobIntegrationManager.getInstance());
+            AdMobIntegrationManager.getInstance().initialize(this);
+        }
         rootAnimatedInsetsListener = new WindowAnimatedInsetsProvider(frameLayout);
         pipActivityController.addPipListener(new IPipActivityListener() {
             final ActivityVisibilityController activityVisibilityController = createActivityVisibilityController(false);
@@ -545,6 +577,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             if (getLastFragment() != null && getLastFragment().getLastStoryViewer() != null) {
                 getLastFragment().getLastStoryViewer().updatePlayingMode();
             }
+            enforceBiometricChatLock();
         });
         actionBarLayout.setDelegate(this);
         Theme.loadWallpaper(true);
@@ -1197,6 +1230,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         ConnectionsManager.getInstance(currentAccount).setAppPaused(true, false);
         UserConfig.selectedAccount = account;
         UserConfig.getInstance(0).saveConfig(false);
+        org.nayagram.platform.security.NGHiddenAccounts.onAccountSelected(account);
 
         checkCurrentAccount();
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.activeAccountChanged, account);
@@ -1237,7 +1271,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     private void switchToAvailableAccountOrLogout() {
         int account = -1;
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            if (UserConfig.getInstance(a).isClientActivated()) {
+            if (UserConfig.getInstance(a).isClientActivated() && !org.nayagram.platform.security.NGHiddenAccounts.isConcealed(a)) {
                 account = a;
                 break;
             }
@@ -1460,6 +1494,16 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         SharedConfig.isWaitingForPasscodeEnter = true;
         PasscodeView.PasscodeViewDelegate delegate = view -> {
             SharedConfig.isWaitingForPasscodeEnter = false;
+            // Re-evaluate the original background interval only after Telegram passcode
+            // succeeds; NG Guard must still block content if its timeout expired meanwhile.
+            NGSafety.onAppForeground(LaunchActivity.this);
+            // Enforce NG Guard before restoring the main content after Telegram's passcode.
+            if (NGSafety.isEnabled(LaunchActivity.this) && !NGSafety.isSessionVerified()) {
+                BaseFragment topFragment = getActionBarLayout().getLastFragment();
+                if (!(topFragment instanceof NGSafetyActivity)) {
+                    presentFragment(new NGSafetyActivity(true));
+                }
+            }
             if (passcodeSaveIntent != null) {
                 handleIntent(passcodeSaveIntent, passcodeSaveIntentIsNew, passcodeSaveIntentIsRestore, true, null, false, true);
                 passcodeSaveIntent = null;
@@ -1848,6 +1892,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                             exportingChatUri = uri;
                                             continue;
                                         }
+                                    }
+                                    if (!BuildVars.NO_SCOPED_STORAGE) {
+                                        path = MediaController.copyFileToCache(uri, "file");
                                     }
                                     if (path != null) {
                                         if (path.startsWith("file:")) {
@@ -2899,7 +2946,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                             } else if (error != null) {
                                 if ("URL_EXPIRED".equalsIgnoreCase(error.text)) {
                                     OAuthSheet.getBulletinFactory()
-                                        .createSimpleBulletin(R.raw.error, getString(R.string.BotAuthLoggedInFailTitle), getString(R.string.BotAuthLoggedInFailNoDomain))
+                                        .createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.BotAuthLoggedInFailTitle), LocaleController.getString(R.string.BotAuthLoggedInFailNoDomain))
                                         .show();
                                 } else {
                                     OAuthSheet.getBulletinFactory().showForError(error);
@@ -3348,7 +3395,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         final LoginActivity loginActivity = new LoginActivity().changeEmail(() -> {
             Bulletin.LottieLayout layout = new Bulletin.LottieLayout(this, null);
             layout.setAnimation(R.raw.email_check_inbox);
-            layout.textView.setText(getString(R.string.YourLoginEmailChangedSuccess));
+            layout.textView.setText(LocaleController.getString(R.string.YourLoginEmailChangedSuccess));
             int duration = Bulletin.DURATION_SHORT;
 
             BaseFragment fragment = getLastFragment();
@@ -3374,9 +3421,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
             new AlertDialog.Builder(this)
                     .setTitle(spannable)
-                    .setMessage(getString(R.string.EmailLoginChangeMessage))
-                    .setPositiveButton(getString(R.string.ChangeEmail), (dialog, which) -> presentFragment(loginActivity))
-                    .setNegativeButton(getString(R.string.Cancel), null)
+                    .setMessage(LocaleController.getString(R.string.EmailLoginChangeMessage))
+                    .setPositiveButton(LocaleController.getString(R.string.ChangeEmail), (dialog, which) -> presentFragment(loginActivity))
+                    .setNegativeButton(LocaleController.getString(R.string.Cancel), null)
                     .show();
         } else {
             presentFragment(loginActivity);
@@ -4082,7 +4129,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             requestId[0] = GiftAuctionController.getInstance(currentAccount).requestGiftAuctionBySlug(stargiftPreviewSlug, (res, err) -> {
                 if (err != null) {
                     BulletinFactory.of(mainFragmentsStack.get(mainFragmentsStack.size() - 1))
-                            .createSimpleBulletin(R.raw.error, getString(R.string.GiftAuctionNotFound))
+                            .createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.GiftAuctionNotFound))
                             .show();
                 } else if (res != null) {
                     GiftAuctionController.Auction auction = GiftAuctionController.getInstance(currentAccount).getAuction(res.gift.id);
@@ -4101,7 +4148,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             requestId[0] = GiftAuctionController.getInstance(currentAccount).requestGiftAuctionBySlug(auctionSlug, (res, err) -> {
                 if (err != null) {
                     BulletinFactory.of(mainFragmentsStack.get(mainFragmentsStack.size() - 1))
-                            .createSimpleBulletin(R.raw.error, getString(R.string.GiftAuctionNotFound))
+                            .createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.GiftAuctionNotFound))
                             .show();
                 } else if (res != null) {
                     AuctionJoinSheet.show(LaunchActivity.this, null, currentAccount, 0, res.gift.id, null);
@@ -4122,11 +4169,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                     if (lastFragment == null) return;
                     if ("STARGIFT_ALREADY_BURNED".equalsIgnoreCase(error.text)) {
                         BulletinFactory.of(lastFragment)
-                            .createSimpleBulletin(R.raw.fire_on, getString(R.string.UniqueGiftNotFoundBurned))
+                            .createSimpleBulletin(R.raw.fire_on, LocaleController.getString(R.string.UniqueGiftNotFoundBurned))
                             .show();
                     } else {
                         BulletinFactory.of(lastFragment)
-                            .createSimpleBulletin(R.raw.error, getString(R.string.UniqueGiftNotFound))
+                            .createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.UniqueGiftNotFound))
                             .show();
                     }
                 } else if (response instanceof TL_stars.TL_payments_uniqueStarGift) {
@@ -6078,9 +6125,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                         SharedPreferences preferences = MessagesController.getGlobalMainSettings();
                         SharedPreferences.Editor editor = MessagesController.getGlobalMainSettings().edit();
                         editor.putBoolean("proxy_enabled", false);
-                        editor.putBoolean("proxy_enabled_calls", false);
                         editor.commit();
-                        ConnectionsManager.setProxySettings(false, "", 1080, "", "", "");
+                        ConnectionsManager.setProxySettings(false, null);
                         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged);
                         proxyErrorDialog = null;
                     }
@@ -6241,6 +6287,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         } else {
             boolean notify = dialogsFragment == null || dialogsFragment.notify || _notify;
             int scheduleDate = _scheduleDate != 0 ? _scheduleDate : dialogsFragment == null ? 0 : dialogsFragment.scheduleDate;
+            final boolean forceDocument = dialogsFragment != null && dialogsFragment.forceDocument;
             final ChatActivity fragment;
             if (dids.size() <= 1) {
                 final long did = dids.get(0).dialogId;
@@ -6403,7 +6450,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                 photoPathsArray.get(0).caption = m[0].toString();
                                 sendingText = null;
                             }
-                            SendMessagesHelper.prepareSendingMedia(accountInstance, photoPathsArray, did, replyToMsg, replyToMsg, null, null, false, photoPathsArray.size() > 1, null, notify, scheduleDate, scheduleRepeatPeriod, 0, false, null, null, 0, false, 0, 0, null);
+                            SendMessagesHelper.prepareSendingMedia(accountInstance, photoPathsArray, did, replyToMsg, replyToMsg, null, null, forceDocument, photoPathsArray.size() > 1, null, notify, scheduleDate, scheduleRepeatPeriod, 0, false, null, null, 0, false, 0, 0, null);
                         }
                     } else {
                         if (videoPath != null) {
@@ -6422,7 +6469,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                 photoPathsArray.get(0).caption = m[0].toString();
                                 sendingText = null;
                             }
-                            SendMessagesHelper.prepareSendingMedia(accountInstance, photoPathsArray, did, replyToMsg, replyToMsg, null, null, false, photoPathsArray.size() > 1, null, notify, scheduleDate, scheduleRepeatPeriod, 0, false, null, null, 0, false, 0, 0, null);
+                            SendMessagesHelper.prepareSendingMedia(accountInstance, photoPathsArray, did, replyToMsg, replyToMsg, null, null, forceDocument, photoPathsArray.size() > 1, null, notify, scheduleDate, scheduleRepeatPeriod, 0, false, null, null, 0, false, 0, 0, null);
                         }
                     }
                     if (documentsPathsArray != null || documentsUrisArray != null) {
@@ -6636,6 +6683,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
+        if (GramWalletStorageAuth.onActivityResult(this, requestCode, resultCode)) return;
         if (requestCode == SCREEN_CAPTURE_REQUEST_CODE) {
             if (resultCode == Activity.RESULT_OK) {
                 VoIPService service = VoIPService.getSharedInstance();
@@ -6725,6 +6773,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     @Override
     protected void onPause() {
         super.onPause();
+        org.nayagram.platform.security.BiometricChatLocker.getInstance(this).lockAllSessions();
+        NGSafety.onAppBackground(this);
+        org.nayagram.platform.security.NGHiddenAccounts.onAppPaused();
         isResumed = false;
         pipActivityHandler.onPause();
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.stopAllHeavyOperations, 4096);
@@ -6790,6 +6841,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     @Override
     protected void onStop() {
         super.onStop();
+        GramWalletStorageAuth.onActivityStopped(this);
         isStarted = false;
         pipActivityHandler.onStop();
         Browser.unbindCustomTabsService(this);
@@ -6850,9 +6902,13 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     @Override
     protected void onDestroy() {
+        GramWalletStorageAuth.onActivityDestroyed(this);
         isActive = false;
         activeInstanceCount--;
         unregisterReceiver(batteryReceiver);
+        try {
+            unregisterReceiver(hiddenAccountsScreenReceiver);
+        } catch (Throwable ignore) {}
 
         if (activeInstanceCount == 0) {
             onDestroyStaticResources();
@@ -6939,6 +6995,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             editorView.destroy();
         }
         FloatingDebugController.onDestroy();
+        AnimatedEmojiDrawable.dropGlobalEmojiCache();
         if (BuildConfig.DEBUG_PRIVATE_VERSION) {
             LeakDetector.getInstance().stop();
         }
@@ -6957,8 +7014,113 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     View feedbackView;
 
+    private void enforceBiometricChatLock() {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        BaseFragment top = getLastFragment();
+        if (!(top instanceof ChatActivity)) {
+            biometricChatGatePending = false;
+            biometricChatGateDialogId = 0;
+            removeBiometricChatGateOverlay();
+            return;
+        }
+        if (biometricChatGatePending) {
+            return;
+        }
+        ChatActivity chat = (ChatActivity) top;
+        long dialogId = chat.getDialogId();
+        org.nayagram.platform.security.BiometricChatLocker locker =
+                org.nayagram.platform.security.BiometricChatLocker.getInstance(this);
+        if (!locker.isChatProtected(dialogId) || locker.isChatUnlockedForSession(dialogId)) {
+            biometricChatGatePending = false;
+            biometricChatGateDialogId = 0;
+            removeBiometricChatGateOverlay();
+            return;
+        }
+
+        biometricChatGatePending = true;
+        biometricChatGateDialogId = dialogId;
+        android.view.ViewGroup decor = (android.view.ViewGroup) getWindow().getDecorView();
+        android.widget.FrameLayout overlay = new android.widget.FrameLayout(this);
+        overlay.setBackgroundColor(0xFFF7FBFF);
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
+        android.widget.LinearLayout card = new android.widget.LinearLayout(this);
+        card.setOrientation(android.widget.LinearLayout.VERTICAL);
+        card.setGravity(android.view.Gravity.CENTER);
+        card.setPadding(dp(28), dp(24), dp(28), dp(24));
+        android.graphics.drawable.GradientDrawable cardBackground = new android.graphics.drawable.GradientDrawable();
+        cardBackground.setColor(0xFFFFFFFF);
+        cardBackground.setCornerRadius(dp(24));
+        cardBackground.setStroke(dp(1), 0xFFB8E6D0);
+        card.setBackground(cardBackground);
+        android.widget.TextView title = new android.widget.TextView(this);
+        title.setText("Protected chat");
+        title.setTextColor(0xFF0F172A);
+        title.setTextSize(22);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setGravity(android.view.Gravity.CENTER);
+        android.widget.TextView message = new android.widget.TextView(this);
+        message.setText("Verify with fingerprint, face unlock, or your device screen lock to continue.");
+        message.setTextColor(0xFF475569);
+        message.setTextSize(15);
+        message.setGravity(android.view.Gravity.CENTER);
+        android.widget.LinearLayout.LayoutParams messageParams = new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        messageParams.topMargin = dp(12);
+        card.addView(title, new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+        card.addView(message, messageParams);
+        overlay.addView(card, new android.widget.FrameLayout.LayoutParams(
+                Math.min(getResources().getDisplayMetrics().widthPixels - dp(40), dp(360)),
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER));
+        decor.addView(overlay, new android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        biometricChatGateOverlay = overlay;
+
+        locker.authenticateAndUnlock(this, dialogId, new org.nayagram.platform.security.BiometricChatLocker.UnlockCallback() {
+            @Override
+            public void onUnlockSuccess() {
+                runOnUiThread(() -> {
+                    BaseFragment current = getLastFragment();
+                    if (!(current instanceof ChatActivity) || ((ChatActivity) current).getDialogId() != dialogId) {
+                        // Do not leave a session grant behind if navigation changed during authentication.
+                        locker.lockAllSessions();
+                    }
+                    biometricChatGatePending = false;
+                    biometricChatGateDialogId = 0;
+                    removeBiometricChatGateOverlay();
+                });
+            }
+
+            @Override
+            public void onUnlockFailed() {
+                runOnUiThread(() -> {
+                    biometricChatGatePending = false;
+                    biometricChatGateDialogId = 0;
+                    removeBiometricChatGateOverlay();
+                    BaseFragment current = getLastFragment();
+                    if (current instanceof ChatActivity && ((ChatActivity) current).getDialogId() == dialogId) {
+                        current.finishFragment();
+                    }
+                });
+            }
+        });
+    }
+
+    private void removeBiometricChatGateOverlay() {
+        android.view.View overlay = biometricChatGateOverlay;
+        biometricChatGateOverlay = null;
+        if (overlay != null && overlay.getParent() instanceof android.view.ViewGroup) {
+            ((android.view.ViewGroup) overlay.getParent()).removeView(overlay);
+        }
+    }
+
     @Override
     protected void onResume() {
+        // checkNayaGramProChannelPrompt();
+        org.nayagram.platform.AutoPinChannelManager.checkAndPinOfficialChannel(currentAccount);
         super.onResume();
         isResumed = true;
         pipActivityHandler.onResume();
@@ -6983,8 +7145,21 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         checkFreeDiscSpace(0);
         MediaController.checkGallery();
         onPasscodeResume();
+        // Wait until Telegram's native passcode state is known. If its dialog is visible,
+        // retain the background timestamp until that dialog is dismissed; otherwise restore
+        // NG Guard before resuming custom fragments so their gates see the persisted state.
         if (passcodeDialog == null || passcodeDialog.passcodeView.getVisibility() != View.VISIBLE) {
+            NGSafety.onAppForeground(this);
+            org.nayagram.platform.security.NGHiddenAccounts.onAppResumed();
             actionBarLayout.onResume();
+            enforceBiometricChatLock();
+            // Also gate restored chats/deep links when the app returns from the background.
+            if (NGSafety.isEnabled(this) && !NGSafety.isSessionVerified()) {
+                BaseFragment topFragment = getActionBarLayout().getLastFragment();
+                if (!(topFragment instanceof NGSafetyActivity)) {
+                    presentFragment(new NGSafetyActivity(true));
+                }
+            }
             if (AndroidUtilities.isTablet()) {
                 if (rightActionBarLayout != null) {
                     rightActionBarLayout.onResume();
@@ -7246,14 +7421,14 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                     builder.setPositiveButton(LocaleController.getString(R.string.Cancel), null);
                     builder.setNegativeButton(LocaleController.getString(R.string.LogOut), (dialog, which) -> MessagesController.getInstance(currentAccount).performLogout(2));
                 } else if (type.startsWith("PREMIUM_")) {
-                    builder.setTitle(LocaleController.getString(R.string.TelegramPremium));
+                    builder.setTitle(LocaleController.getString(R.string.NayaGramPremium));
                     builder.setPositiveButton(LocaleController.getString(R.string.OK), null);
                 } else {
                     builder.setPositiveButton(LocaleController.getString(R.string.OK), null);
                 }
             } else if (reason == 3) {
                 builder.setTitle(LocaleController.getString(R.string.Proxy));
-                builder.setMessage(LocaleController.getString(R.string.UseProxyTelegramError));
+                builder.setMessage(LocaleController.getString(R.string.UseProxyNayaGramError));
                 builder.setPositiveButton(LocaleController.getString(R.string.OK), null);
                 proxyErrorDialog = showAlertDialog(builder);
                 return;
@@ -7674,6 +7849,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                 ForumUtilities.switchAllFragmentsInStackToForum(chatId, actionBarLayout);
             }
         } else if (id == NotificationCenter.tlSchemeParseException) {
+            if (BuildConfig.DEBUG_PRIVATE_VERSION) {
+                return;
+            }
             if (tlErrorAlertDialog == null) {
                 final TLParseException error = (TLParseException) args[0];
 
@@ -7695,10 +7873,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                 AlertDialog.Builder builder = new AlertDialog.Builder(this, null);
                 builder.setTitle("TL Error");
                 builder.setMessage(messageToShow);
-                builder.setNegativeButton(getString(R.string.Copy), (d, i) -> {
+                builder.setNegativeButton(LocaleController.getString(R.string.Copy), (d, i) -> {
                     AndroidUtilities.addToClipboard(messageToCopy);
                 });
-                builder.setPositiveButton(getString(R.string.OK), null);
+                builder.setPositiveButton(LocaleController.getString(R.string.OK), null);
                 builder.setOnDismissListener(d -> {
                     AndroidUtilities.runOnUIThread(() -> {
                         tlErrorAlertDialog = null;
@@ -7723,7 +7901,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                 AlertDialog.Builder builder = new AlertDialog.Builder(this, null);
                 builder.setTitle("Memory Leak Found");
                 builder.setMessage(messageToShow);
-                builder.setPositiveButton(getString(R.string.OK), null);
+                builder.setPositiveButton(LocaleController.getString(R.string.OK), null);
                 builder.setOnDismissListener(d -> {
                     AndroidUtilities.runOnUIThread(() -> {
                         memoryLeakErrorAlertDialog = null;
@@ -9234,4 +9412,25 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             return AndroidUtilities.fixedDispatchApplyWindowInsets(insets, this);
         }
     }
+
+    private void checkNayaGramProChannelPrompt() {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("nayagram_onboarding_prefs", MODE_PRIVATE);
+            if (!sp.getBoolean("nayagrampro_prompted", false)) {
+                sp.edit().putBoolean("nayagrampro_prompted", true).apply();
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (isFinishing()) return;
+                    AlertDialog.Builder b = new AlertDialog.Builder(this);
+                    b.setTitle("Welcome to NayaGram! 🇧🇩");
+                    b.setMessage("Join our official channel @NayaGramPro to receive the latest updates, exclusive features, themes, and community support.");
+                    b.setPositiveButton("Join @NayaGramPro", (dialog, which) -> {
+                        org.telegram.messenger.browser.Browser.openUrl(this, "https://t.me/NayaGramPro");
+                    });
+                    b.setNegativeButton("Later", null);
+                    b.show();
+                }, 2000);
+            }
+        } catch (Exception ignored) {}
+    }
+
 }

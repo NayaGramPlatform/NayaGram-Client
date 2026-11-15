@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 @Keep
 public class PushListenerController {
@@ -44,7 +45,6 @@ public class PushListenerController {
     public @interface PushType {}
 
     public static final int NOTIFICATION_ID = 1;
-    private static CountDownLatch countDownLatch = new CountDownLatch(1);
 
     public static void sendRegistrationToServer(@PushType int pushType, String token) {
         Utilities.stageQueue.postRunnable(() -> {
@@ -98,6 +98,7 @@ public class PushListenerController {
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d(tag + " PRE START PROCESSING");
         }
+        final CountDownLatch pushLatch = new CountDownLatch(1);
         long receiveTime = SystemClock.elapsedRealtime();
         AndroidUtilities.runOnUIThread(() -> {
             if (BuildVars.LOGS_ENABLED) {
@@ -114,6 +115,7 @@ public class PushListenerController {
                 int currentAccount = -1;
                 String loc_key = null;
                 String jsonString = null;
+                boolean canRelease = true;
                 try {
                     byte[] bytes = Base64.decode(data, Base64.URL_SAFE);
                     NativeByteBuffer buffer = new NativeByteBuffer(bytes.length);
@@ -128,7 +130,8 @@ public class PushListenerController {
                     byte[] inAuthKeyId = new byte[8];
                     buffer.readBytes(inAuthKeyId, true);
                     if (!Arrays.equals(SharedConfig.pushAuthKeyId, inAuthKeyId)) {
-                        onDecryptError();
+                        canRelease = false;
+                        onDecryptError(pushLatch);
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(Locale.US, tag + " DECRYPT ERROR 2 k1=%s k2=%s, key=%s", Utilities.bytesToHex(SharedConfig.pushAuthKeyId), Utilities.bytesToHex(inAuthKeyId), Utilities.bytesToHex(SharedConfig.pushAuthKey)));
                         }
@@ -143,7 +146,8 @@ public class PushListenerController {
 
                     byte[] messageKeyFull = Utilities.computeSHA256(SharedConfig.pushAuthKey, 88 + 8, 32, buffer.buffer, 24, buffer.buffer.limit());
                     if (!Utilities.arraysEquals(messageKey, 0, messageKeyFull, 8)) {
-                        onDecryptError();
+                        canRelease = false;
+                        onDecryptError(pushLatch);
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(tag + " DECRYPT ERROR 3, key = %s", Utilities.bytesToHex(SharedConfig.pushAuthKey)));
                         }
@@ -157,7 +161,6 @@ public class PushListenerController {
                     JSONObject json = new JSONObject(jsonString);
 
                     if (ApplicationLoader.applicationLoaderInstance != null && ApplicationLoader.applicationLoaderInstance.consumePush(currentAccount, json)) {
-                        countDownLatch.countDown();
                         return;
                     }
 
@@ -192,7 +195,7 @@ public class PushListenerController {
                         } else if (userIdObject instanceof Integer) {
                             accountUserId = (Integer) userIdObject;
                         } else if (userIdObject instanceof String) {
-                            accountUserId = Utilities.parseInt((String) userIdObject);
+                            accountUserId = Utilities.parseLong((String) userIdObject);
                         } else {
                             accountUserId = UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId();
                         }
@@ -210,7 +213,6 @@ public class PushListenerController {
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(tag + " ACCOUNT NOT FOUND");
                         }
-                        countDownLatch.countDown();
                         return;
                     }
                     final int accountFinal = currentAccount = account;
@@ -218,26 +220,33 @@ public class PushListenerController {
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(tag + " ACCOUNT NOT ACTIVATED");
                         }
-                        countDownLatch.countDown();
                         return;
                     }
                     if (BuildVars.LOGS_ENABLED) {
                         FileLog.d(tag + " " + loc_key);
                     }
                     switch (loc_key) {
+                        case "MESSAGE_WALLET_TONCONNECT_REQUEST":
+                        case "MESSAGE_WALLET_TONCONNECT_REQUEST_DAPP": {
+                            JSONArray args = json.optJSONArray("loc_args");
+                            String dapp = "MESSAGE_WALLET_TONCONNECT_REQUEST_DAPP".equals(loc_key) && args != null
+                                    ? args.optString(1, null) : null;
+                            NotificationsController.getInstance(currentAccount).showTonConnectNotification(dapp, time);
+                            ConnectionsManager.onInternalPushReceived(currentAccount);
+                            ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
+                            return;
+                        }
                         case "DC_UPDATE": {
                             int dc = custom.getInt("dc");
                             String addr = custom.getString("addr");
                             String[] parts = addr.split(":");
                             if (parts.length != 2) {
-                                countDownLatch.countDown();
                                 return;
                             }
                             String ip = parts[0];
                             int port = Integer.parseInt(parts[1]);
                             ConnectionsManager.getInstance(currentAccount).applyDatacenterAddress(dc, ip, port);
                             ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
-                            countDownLatch.countDown();
                             return;
                         }
                         case "MESSAGE_ANNOUNCEMENT": {
@@ -252,7 +261,6 @@ public class PushListenerController {
                             updates.updates.add(update);
                             Utilities.stageQueue.postRunnable(() -> MessagesController.getInstance(accountFinal).processUpdates(updates, false));
                             ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
-                            countDownLatch.countDown();
                             return;
                         }
                         case "SESSION_REVOKE": {
@@ -262,12 +270,10 @@ public class PushListenerController {
                                     MessagesController.getInstance(accountFinal).performLogout(0);
                                 }
                             });
-                            countDownLatch.countDown();
                             return;
                         }
                         case "GEO_LIVE_PENDING": {
                             Utilities.stageQueue.postRunnable(() -> LocationController.getInstance(accountFinal).setNewLocationEndWatchTime());
-                            countDownLatch.countDown();
                             return;
                         }
                         case "OAUTH_REQUEST": {
@@ -306,7 +312,8 @@ public class PushListenerController {
                             ArrayList<MessageObject> arrayList = new ArrayList<>();
                             arrayList.add(messageObject);
                             FileLog.d("PushListenerController push OAUTH notification to NotificationsController of " + messageOwner.dialog_id);
-                            NotificationsController.getInstance(currentAccount).processNewMessages(arrayList, true, true, countDownLatch);
+                            canRelease = false;
+                            NotificationsController.getInstance(currentAccount).processNewMessages(arrayList, true, true, pushLatch);
                             return;
                         }
                     }
@@ -351,7 +358,6 @@ public class PushListenerController {
                     if (dialogId == 0 && "ENCRYPTED_MESSAGE".equals(loc_key)) {
                         dialogId = NotificationsController.globalSecretChatId;
                     }
-                    boolean canRelease = true;
                     if (dialogId != 0) {
                         if ("CONF_CALL_REQUEST".equals(loc_key) || "CONF_VIDEOCALL_REQUEST".equals(loc_key)) {
                             final long call_id = custom.getLong("call_id");
@@ -559,6 +565,22 @@ public class PushListenerController {
                                         case "MESSAGE_RECURRING_PAY": {
                                             messageText = LocaleController.formatString("NotificationMessageRecurringPay", R.string.NotificationMessageRecurringPay, args[0], args[1]);
                                             message1 = getString(R.string.PaymentInvoice);
+                                            break;
+                                        }
+                                        case "MESSAGE_GRAM_TRANSFER":
+                                        case "MESSAGE_GRAM_TRANSFER_COMMENT":
+                                        case "MESSAGE_GRAM_TRANSFER_UNKNOWN":
+                                        case "MESSAGE_GRAM_TRANSFER_UNKNOWN_COMMENT": {
+                                            boolean unknown = loc_key.startsWith("MESSAGE_GRAM_TRANSFER_UNKNOWN");
+                                            boolean comment = loc_key.endsWith("_COMMENT");
+                                            if (args == null || args.length < (comment ? 3 : 2)) {
+                                                break;
+                                            }
+                                            int stringId = unknown
+                                                    ? (comment ? R.string.NotificationGramTransferUnknownComment : R.string.NotificationGramTransferUnknown)
+                                                    : (comment ? R.string.NotificationGramTransferComment : R.string.NotificationGramTransfer);
+                                            messageText = LocaleController.formatString(stringId, (Object[]) args);
+                                            message1 = messageText;
                                             break;
                                         }
                                         case "MESSAGE_TEXT":
@@ -1417,8 +1439,9 @@ public class PushListenerController {
                                     FileLog.d(tag + " received message notification " + loc_key + " for dialogId = " + dialogId + " mid = " + msg_id);
                                 }
                                 if (messageText != null) {
+                                    boolean isStoryReaction = loc_key.equals("REACT_STORY") || loc_key.equals("REACT_STORY_HIDDEN");
                                     TLRPC.TL_message messageOwner = new TLRPC.TL_message();
-                                    if (loc_key.startsWith("REACT_STORY") && msg_id > 0) {
+                                    if (isStoryReaction && msg_id > 0) {
                                         msg_id = -msg_id;
                                     }
                                     messageOwner.id = msg_id;
@@ -1465,7 +1488,7 @@ public class PushListenerController {
                                         messageObject.messageOwner.reply_to.forum_topic = true;
                                         messageObject.messageOwner.reply_to.reply_to_top_id = topicId;
                                     }
-                                    messageObject.isStoryReactionPush = loc_key.startsWith("REACT_STORY");
+                                    messageObject.isStoryReactionPush = isStoryReaction;
                                     messageObject.isReactionPush = !messageObject.isStoryReactionPush && (loc_key.startsWith("REACT_") || loc_key.startsWith("CHAT_REACT_"));
                                     messageObject.isStoryPush = loc_key.equals("STORY_NOTEXT") || loc_key.equals("STORY_HIDDEN_AUTHOR");
                                     messageObject.isLiveStoryPush = loc_key.equals("STORY_LIVE");
@@ -1480,16 +1503,13 @@ public class PushListenerController {
                                         final int mid = msg_id;
                                         AndroidUtilities.runOnUIThread(() -> MessagesController.getInstance(accountFinal).reportMessageDelivery(did, mid, true));
                                     }
-                                    NotificationsController.getInstance(currentAccount).processNewMessages(arrayList, true, true, countDownLatch);
+                                    NotificationsController.getInstance(currentAccount).processNewMessages(arrayList, true, true, pushLatch);
                                 }
                             } else if ("CONF_CALL_MISSED".equalsIgnoreCase(loc_key)) {
                                 final long call_id = custom.getLong("call_id");
                                 VoIPGroupNotification.hideByCallId(ApplicationLoader.applicationContext, account, call_id);
                             }
                         }
-                    }
-                    if (canRelease) {
-                        countDownLatch.countDown();
                     }
 
                     ConnectionsManager.onInternalPushReceived(currentAccount);
@@ -1498,19 +1518,24 @@ public class PushListenerController {
                     if (currentAccount != -1) {
                         ConnectionsManager.onInternalPushReceived(currentAccount);
                         ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
-                        countDownLatch.countDown();
                     } else {
-                        onDecryptError();
+                        canRelease = false;
+                        onDecryptError(pushLatch);
                     }
                     if (BuildVars.LOGS_ENABLED) {
                         FileLog.e("error in loc_key = " + loc_key + " json " + jsonString);
                     }
                     FileLog.e(e);
+                } finally {
+                    if (canRelease) {
+                        pushLatch.countDown();
+                    }
                 }
             });
         });
         try {
-            countDownLatch.await();
+            pushLatch.await(12, TimeUnit.SECONDS);
+            IncomingMessageInterceptor.awaitBackgroundAutoReply(16000);
         } catch (Throwable ignore) {
 
         }
@@ -1632,6 +1657,98 @@ public class PushListenerController {
             case "CHAT_REACT_GIF": {
                 return LocaleController.formatString(R.string.PushChatReactGif, args);
             }
+            case "REACT_PHOTO_SECRET": {
+                return LocaleController.formatString(R.string.PushReactPhotoSecret, args);
+            }
+            case "REACT_VIDEO_SECRET": {
+                return LocaleController.formatString(R.string.PushReactVideoSecret, args);
+            }
+            case "REACT_TODO_APPEND":
+            case "REACT_TODO_DONE": {
+                return LocaleController.formatString(R.string.PushReactTodoUpdate, args);
+            }
+            case "REACT_GAME_SCORE": {
+                return LocaleController.formatString(R.string.PushReactGameScore, args);
+            }
+            case "REACT_PAID_MEDIA": {
+                return LocaleController.formatString(R.string.PushReactPaidMedia, args);
+            }
+            case "REACT_STORY_MENTION": {
+                return LocaleController.formatString(R.string.PushReactStoryMention, args);
+            }
+            case "REACT_GIVEAWAY_STARS": {
+                return LocaleController.formatString(R.string.NotificationReactGiveaway, args);
+            }
+            case "REACT_GIFTCODE": {
+                return LocaleController.formatString(R.string.PushReactGiftCode, args);
+            }
+            case "REACT_THEME":
+            case "REACT_GIFT_THEME":
+            case "REACT_NOTHEME": {
+                return LocaleController.formatString(R.string.PushReactThemeChange, args);
+            }
+            case "REACT_WALLPAPER": {
+                return LocaleController.formatString(R.string.PushReactWallpaper, args);
+            }
+            case "REACT_SAME_WALLPAPER": {
+                return LocaleController.formatString(R.string.PushReactSameWallpaper, args);
+            }
+            case "REACT_SUGGEST_USERPIC": {
+                return LocaleController.formatString(R.string.PushReactSuggestUserpic, args);
+            }
+            case "REACT_SUGGEST_BIRTHDAY": {
+                return LocaleController.formatString(R.string.PushReactSuggestBirthday, args);
+            }
+            case "REACT_RECURRING_PAY": {
+                return LocaleController.formatString(R.string.PushReactRecurringPay, args);
+            }
+            case "REACT_STARGIFT": {
+                return LocaleController.formatString(R.string.PushReactStarGift, args);
+            }
+            case "REACT_UNIQUE_STARGIFT": {
+                return LocaleController.formatString(R.string.PushReactUniqueStarGift, args);
+            }
+            case "REACT_STARGIFT_UPGRADE": {
+                return LocaleController.formatString(R.string.PushReactStarGiftUpgrade, args);
+            }
+            case "REACT_STARGIFT_PREPAID_UPGRADE": {
+                return LocaleController.formatString(R.string.PushReactStarGiftPrepaidUpgrade, args);
+            }
+            case "REACT_STARGIFT_UNPACK_UPGRADE": {
+                return LocaleController.formatString(R.string.PushReactStarGiftUnpackUpgrade, args);
+            }
+            case "REACT_GRAM_TRANSFER": {
+                return LocaleController.formatString(R.string.PushReactGramTransfer, args);
+            }
+            case "REACT_GRAM_TRANSFER_COMMENT": {
+                return LocaleController.formatString(R.string.PushReactGramTransferComment, args);
+            }
+            case "REACT_WALLET_TONCONNECT_REQUEST": {
+                return LocaleController.formatString(R.string.PushReactWalletTonConnectRequest, args);
+            }
+            case "REACT_PROXIMITY": {
+                return LocaleController.formatString(R.string.PushReactProximity, args);
+            }
+            case "REACT_SCREENSHOT": {
+                return LocaleController.formatString(R.string.PushReactScreenshot, args);
+            }
+            case "CHAT_REACT_GAME_SCORE": {
+                return LocaleController.formatString(R.string.PushChatReactGameScore, args);
+            }
+            case "CHAT_REACT_STORY": {
+                return LocaleController.formatString(R.string.PushChatReactStory, args);
+            }
+            case "CHAT_REACT_THEME":
+            case "CHAT_REACT_NOTHEME": {
+                return LocaleController.formatString(R.string.PushChatReactThemeChange, args);
+            }
+            case "CHAT_REACT_POLL_APPEND": {
+                return LocaleController.formatString(R.string.PushChatReactPollUpdate, args);
+            }
+            case "CHAT_REACT_TODO_APPEND":
+            case "CHAT_REACT_TODO_DONE": {
+                return LocaleController.formatString(R.string.PushChatReactTodoUpdate, args);
+            }
             /* stories */
             case "REACT_STORY": {
                 return LocaleController.formatString(R.string.PushReactStory, args);
@@ -1643,14 +1760,16 @@ public class PushListenerController {
         return null;
     }
 
-    private static void onDecryptError() {
+    private static void onDecryptError(CountDownLatch pushLatch) {
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             if (UserConfig.getInstance(a).isClientActivated()) {
                 ConnectionsManager.onInternalPushReceived(a);
                 ConnectionsManager.getInstance(a).resumeNetworkMaybe();
             }
         }
-        countDownLatch.countDown();
+        if (pushLatch != null) {
+            pushLatch.countDown();
+        }
     }
 
     @Keep

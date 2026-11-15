@@ -1,32 +1,112 @@
 package org.telegram.messenger;
 
+import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.wifi.WifiManager;
+import android.os.PowerManager;
+import android.text.Editable;
+import android.text.Spannable;
+import android.text.Spanned;
+import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.URLSpan;
+import android.text.style.UnderlineSpan;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
+import org.nayagram.platform.NayaConfig;
+import org.telegram.tgnet.ConnectionsManager;
+import org.telegram.tgnet.TLRPC;
+import org.telegram.ui.Components.QuoteSpan;
+import org.telegram.ui.Components.TextStyleSpan;
+import org.telegram.ui.Components.URLSpanReplacement;
+
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.regex.Pattern;
+import java.util.Map;
+import java.util.Set;
 
-/** Handles automatic replies for incoming messages. */
+/**
+ * AutoReplyManager - Clean Novagram-style Auto Answer engine.
+ * - Single clean auto-answer message with native Telegram formatting & links.
+ * - Replies to every incoming message with a 4.5s anti-duplicate / anti-loop guard so Push + Socket never double-send.
+ * - Full hyperlink (TL_messageEntityTextUrl) persistence and visual span restoration.
+ * - Background MTProto socket keep-alive heartbeat so Auto-Reply works 100% automatically even when the app is minimized or screen is off.
+ */
 public class AutoReplyManager {
     private static AutoReplyManager instance;
-    private static final String TAG = "AutoReplyManager";
     private static final String PREFS_NAME = "auto_reply_prefs";
     private static final String KEY_ENABLED = "auto_reply_enabled";
-    private static final String KEY_RULES = "auto_reply_rules";
+    private static final String KEY_TEXT = "auto_answer_text";
+    private static final String KEY_ENTITIES = "auto_answer_entities";
+    private static final String KEY_PRIVATE_ONLY = "auto_reply_private_only";
+    private static final String KEY_ANSWERED_DIALOGS = "answered_dialogs";
+    private static final String KEY_LAST_ANSWERED_MSG_IDS = "last_answered_msg_ids";
+    private static final int MAX_PERSISTED_MSG_IDS = 100;
+    private static final long DEDUP_COOLDOWN_MS = 4500L;
+    private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
+    private static final String DEFAULT_AUTO_ANSWER_TEXT = "আসসালামু আলাইকুম! 🥰\nআমি এখন ব্যস্ত আছি, একটু পরে রিপ্লাই দিচ্ছি ইনশাআল্লাহ।";
 
     private final SharedPreferences preferences;
     private final Gson gson = new Gson();
-    private final List<AutoReplyRule> rules = new ArrayList<>();
     private boolean autoReplyEnabled;
+    private String autoAnswerText = "";
+    private String autoAnswerEntitiesJson = null;
+    private boolean privateOnly = true;
+    private final Set<Long> answeredDialogs = new HashSet<>();
+    private final Map<Long, Long> lastReplyTimestampByDialog = new HashMap<>();
+    private final Map<Long, Integer> lastAnsweredMsgIdByDialog = new HashMap<>();
+
+    private PowerManager.WakeLock backgroundWakeLock;
+    private WifiManager.WifiLock backgroundWifiLock;
+    private boolean heartbeatScheduled = false;
+
+    private final Runnable heartbeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            synchronized (AutoReplyManager.this) {
+                heartbeatScheduled = false;
+            }
+            if (!isAutoReplyEnabled()) {
+                releaseBackgroundLocks();
+                return;
+            }
+            try {
+                boolean isBackgrounded = ApplicationLoader.mainInterfacePaused || !ApplicationLoader.isScreenOn;
+                if (isBackgrounded) {
+                    acquireBackgroundLocks();
+                } else {
+                    releaseBackgroundLocks();
+                }
+                for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                    try {
+                        if (UserConfig.getInstance(a).isClientActivated()) {
+                            ConnectionsManager cm = ConnectionsManager.getInstance(a);
+                            cm.keepNetworkAliveInBackground();
+                            cm.checkConnection();
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            } catch (Throwable ignored) {}
+            scheduleNextHeartbeat();
+        }
+    };
 
     private AutoReplyManager() {
         preferences = ApplicationLoader.applicationContext.getSharedPreferences(
-                PREFS_NAME, android.content.Context.MODE_PRIVATE);
-        loadRules();
+                PREFS_NAME, Context.MODE_PRIVATE);
+        load();
+        if (isAutoReplyEnabled()) {
+            AndroidUtilities.runOnUIThread(() -> {
+                ensureBackgroundKeepAlive();
+                AutoReplySyncWorker.schedule(ApplicationLoader.applicationContext);
+                ApplicationLoader.startPushService();
+            }, 1500);
+        }
     }
 
     public static synchronized AutoReplyManager getInstance() {
@@ -36,124 +116,418 @@ public class AutoReplyManager {
         return instance;
     }
 
+    public synchronized void ensureBackgroundKeepAlive() {
+        if (!isAutoReplyEnabled()) {
+            releaseBackgroundLocks();
+            return;
+        }
+        try {
+            if (ApplicationLoader.mainInterfacePaused || !ApplicationLoader.isScreenOn) {
+                acquireBackgroundLocks();
+            }
+            for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                try {
+                    if (UserConfig.getInstance(a).isClientActivated()) {
+                        ConnectionsManager cm = ConnectionsManager.getInstance(a);
+                        cm.keepNetworkAliveInBackground();
+                        cm.checkConnection();
+                    }
+                } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+        scheduleNextHeartbeat();
+    }
+
+    private synchronized void scheduleNextHeartbeat() {
+        if (heartbeatScheduled || !isAutoReplyEnabled()) {
+            return;
+        }
+        heartbeatScheduled = true;
+        AndroidUtilities.runOnUIThread(heartbeatRunnable, HEARTBEAT_INTERVAL_MS);
+    }
+
+    private synchronized void acquireBackgroundLocks() {
+        try {
+            Context ctx = ApplicationLoader.applicationContext;
+            if (ctx == null) return;
+            if (backgroundWakeLock == null) {
+                PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    backgroundWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NayaGram:AutoReplyKeepAlive");
+                    backgroundWakeLock.setReferenceCounted(false);
+                }
+            }
+            if (backgroundWakeLock != null && !backgroundWakeLock.isHeld()) {
+                backgroundWakeLock.acquire(10 * 60 * 1000L);
+            }
+            if (backgroundWifiLock == null) {
+                WifiManager wm = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    backgroundWifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "NayaGram:AutoReplyWifiLock");
+                    backgroundWifiLock.setReferenceCounted(false);
+                }
+            }
+            if (backgroundWifiLock != null && !backgroundWifiLock.isHeld()) {
+                backgroundWifiLock.acquire();
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private synchronized void releaseBackgroundLocks() {
+        try {
+            if (backgroundWakeLock != null && backgroundWakeLock.isHeld()) {
+                backgroundWakeLock.release();
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (backgroundWifiLock != null && backgroundWifiLock.isHeld()) {
+                backgroundWifiLock.release();
+            }
+        } catch (Throwable ignored) {}
+    }
+
     public synchronized void setAutoReplyEnabled(boolean enabled) {
         autoReplyEnabled = enabled;
-        preferences.edit().putBoolean(KEY_ENABLED, enabled).apply();
-        FileLog.d(TAG + ": Auto-reply " + (enabled ? "enabled" : "disabled"));
+        answeredDialogs.clear();
+        lastReplyTimestampByDialog.clear();
+        lastAnsweredMsgIdByDialog.clear();
+        preferences.edit()
+                .putBoolean(KEY_ENABLED, enabled)
+                .remove(KEY_ANSWERED_DIALOGS)
+                .remove(KEY_LAST_ANSWERED_MSG_IDS)
+                .apply();
+        try {
+            NayaConfig.getInstance().setSmartAutoReply(enabled);
+        } catch (Throwable ignored) {}
+        if (enabled) {
+            ensureBackgroundKeepAlive();
+            try {
+                AutoReplySyncWorker.schedule(ApplicationLoader.applicationContext);
+                ApplicationLoader.startPushService();
+            } catch (Throwable ignored) {}
+        } else {
+            releaseBackgroundLocks();
+            try {
+                AutoReplySyncWorker.cancel(ApplicationLoader.applicationContext);
+                ApplicationLoader.startPushService();
+            } catch (Throwable ignored) {}
+        }
     }
 
     public synchronized boolean isAutoReplyEnabled() {
-        return autoReplyEnabled;
+        try {
+            return autoReplyEnabled || NayaConfig.getInstance().isSmartAutoReply();
+        } catch (Throwable e) {
+            return autoReplyEnabled;
+        }
     }
 
-    public synchronized void addRule(AutoReplyRule rule) {
-        if (rule == null || rule.name == null || rule.name.trim().isEmpty()
-                || rule.keyword == null || rule.keyword.isEmpty() || rule.response == null) {
-            return;
-        }
-        rules.add(rule);
-        saveRules();
-    }
-
-    public synchronized void removeRule(String ruleName) {
-        if (ruleName == null) {
-            return;
-        }
-        rules.removeIf(rule -> ruleName.equals(rule.name));
-        saveRules();
-    }
-
-    public synchronized List<AutoReplyRule> getRules() {
-        return new ArrayList<>(rules);
-    }
-
-    public synchronized AutoReplyRule findMatchingRule(String messageText) {
-        if (!autoReplyEnabled || messageText == null) {
-            return null;
-        }
-        for (AutoReplyRule rule : rules) {
-            if (rule == null || !rule.enabled || rule.keyword == null) {
-                continue;
-            }
-            if (matchesKeyword(messageText, rule)) {
-                return rule;
-            }
-        }
-        return null;
-    }
-
-    private boolean matchesKeyword(String message, AutoReplyRule rule) {
-        if (rule.keyword.isEmpty()) {
-            return false;
-        }
-        if (!rule.regex) {
-            return message.toLowerCase().contains(rule.keyword.toLowerCase());
+    public synchronized String getAutoAnswerText() {
+        if (autoAnswerText != null && !autoAnswerText.trim().isEmpty()) {
+            return autoAnswerText;
         }
         try {
-            return Pattern.compile(rule.keyword, Pattern.CASE_INSENSITIVE).matcher(message).find();
-        } catch (Exception e) {
-            FileLog.e(TAG + ": invalid regex for rule " + rule.name, e);
-            return false;
+            String fallback = NayaConfig.getInstance().getAutoReplyText();
+            if (fallback != null && !fallback.trim().isEmpty()) {
+                return fallback;
+            }
+        } catch (Throwable ignored) {}
+        return DEFAULT_AUTO_ANSWER_TEXT;
+    }
+
+    public synchronized String getCustomReplyMessage() {
+        return getAutoAnswerText();
+    }
+
+    public synchronized void setCustomReplyMessage(String text) {
+        setAutoAnswerText(text, autoAnswerEntitiesJson);
+    }
+
+    public synchronized void setAutoAnswerText(String text) {
+        setAutoAnswerText(text, null);
+    }
+
+    public synchronized void setAutoAnswerText(String text, String entitiesJson) {
+        autoAnswerText = text != null ? text : "";
+        autoAnswerEntitiesJson = entitiesJson;
+        preferences.edit()
+                .putString(KEY_TEXT, autoAnswerText)
+                .putString(KEY_ENTITIES, autoAnswerEntitiesJson)
+                .apply();
+        try {
+            NayaConfig.getInstance().setAutoReplyText(autoAnswerText);
+        } catch (Throwable ignored) {}
+    }
+
+    public synchronized String getAutoAnswerEntitiesJson() {
+        return autoAnswerEntitiesJson;
+    }
+
+    public synchronized boolean isPrivateOnly() {
+        return privateOnly;
+    }
+
+    public synchronized void setPrivateOnly(boolean val) {
+        privateOnly = val;
+        preferences.edit().putBoolean(KEY_PRIVATE_ONLY, val).apply();
+    }
+
+    public synchronized boolean shouldSkipDuplicate(long dialogId, int messageId) {
+        if (messageId != 0) {
+            Integer lastMsgId = lastAnsweredMsgIdByDialog.get(dialogId);
+            if (lastMsgId != null && lastMsgId == messageId) {
+                return true;
+            }
+        }
+        Long lastTs = lastReplyTimestampByDialog.get(dialogId);
+        if (lastTs != null && (System.currentTimeMillis() - lastTs) < DEDUP_COOLDOWN_MS) {
+            return true;
+        }
+        return false;
+    }
+
+    public synchronized void markMessageAnswered(long dialogId, int messageId) {
+        lastReplyTimestampByDialog.put(dialogId, System.currentTimeMillis());
+        if (messageId != 0) {
+            lastAnsweredMsgIdByDialog.put(dialogId, messageId);
+            saveLastAnsweredMsgIdsLocked();
         }
     }
 
-    public synchronized String getAutoReplyResponse(String messageText) {
-        AutoReplyRule rule = findMatchingRule(messageText);
-        return rule == null ? null : rule.response;
+    public synchronized boolean hasAnsweredDialog(long dialogId) {
+        return shouldSkipDuplicate(dialogId, 0);
+    }
+
+    public synchronized void markAnsweredDialog(long dialogId) {
+        markMessageAnswered(dialogId, 0);
+    }
+
+    public synchronized void removeAnsweredDialog(long dialogId) {
+        answeredDialogs.remove(dialogId);
+        lastReplyTimestampByDialog.remove(dialogId);
+        if (lastAnsweredMsgIdByDialog.remove(dialogId) != null) {
+            saveLastAnsweredMsgIdsLocked();
+        }
+    }
+
+    public synchronized void clearAnsweredDialogs() {
+        answeredDialogs.clear();
+        lastReplyTimestampByDialog.clear();
+        lastAnsweredMsgIdByDialog.clear();
+        preferences.edit().remove(KEY_ANSWERED_DIALOGS).remove(KEY_LAST_ANSWERED_MSG_IDS).apply();
     }
 
     public synchronized boolean shouldSendAutoReply(long dialogId, int accountId) {
-        return autoReplyEnabled;
+        if (!isAutoReplyEnabled()) return false;
+        if (privateOnly && dialogId <= 0) {
+            return false;
+        }
+        return !shouldSkipDuplicate(dialogId, 0);
     }
 
-    private synchronized void saveRules() {
-        try {
-            preferences.edit().putString(KEY_RULES, gson.toJson(rules)).apply();
-        } catch (Exception e) {
-            FileLog.e(TAG + ": failed to save rules", e);
-        }
+    public synchronized String getAutoReplyResponse(String unused) {
+        return getAutoAnswerText();
     }
 
-    private synchronized void loadRules() {
-        autoReplyEnabled = preferences.getBoolean(KEY_ENABLED, false);
-        String json = preferences.getString(KEY_RULES, null);
-        if (json == null || json.isEmpty()) {
-            return;
-        }
+    private void saveLastAnsweredMsgIdsLocked() {
         try {
-            Type type = new TypeToken<List<AutoReplyRule>>() {}.getType();
-            List<AutoReplyRule> storedRules = gson.fromJson(json, type);
-            if (storedRules != null) {
-                rules.clear();
-                rules.addAll(storedRules);
+            if (lastAnsweredMsgIdByDialog.size() > MAX_PERSISTED_MSG_IDS) {
+                int toRemove = lastAnsweredMsgIdByDialog.size() - MAX_PERSISTED_MSG_IDS;
+                java.util.Iterator<Long> it = lastAnsweredMsgIdByDialog.keySet().iterator();
+                while (it.hasNext() && toRemove > 0) {
+                    it.next();
+                    it.remove();
+                    toRemove--;
+                }
             }
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<Long, Integer> entry : lastAnsweredMsgIdByDialog.entrySet()) {
+                if (sb.length() > 0) sb.append(',');
+                sb.append(entry.getKey()).append(':').append(entry.getValue());
+            }
+            preferences.edit().putString(KEY_LAST_ANSWERED_MSG_IDS, sb.toString()).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    private synchronized void load() {
+        autoReplyEnabled = preferences.getBoolean(KEY_ENABLED, false);
+        autoAnswerText = preferences.getString(KEY_TEXT, "");
+        autoAnswerEntitiesJson = preferences.getString(KEY_ENTITIES, null);
+        privateOnly = preferences.getBoolean(KEY_PRIVATE_ONLY, true);
+        answeredDialogs.clear();
+        lastReplyTimestampByDialog.clear();
+        lastAnsweredMsgIdByDialog.clear();
+        if (preferences.contains(KEY_ANSWERED_DIALOGS)) {
+            preferences.edit().remove(KEY_ANSWERED_DIALOGS).apply();
+        }
+        try {
+            String raw = preferences.getString(KEY_LAST_ANSWERED_MSG_IDS, "");
+            if (raw != null && !raw.isEmpty()) {
+                for (String pair : raw.split(",")) {
+                    int idx = pair.indexOf(':');
+                    if (idx > 0 && idx + 1 < pair.length()) {
+                        long did = Long.parseLong(pair.substring(0, idx));
+                        int mid = Integer.parseInt(pair.substring(idx + 1));
+                        lastAnsweredMsgIdByDialog.put(did, mid);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    public static class EntityData {
+        public int type; // 1=Bold, 2=Italic, 3=Mono, 4=Spoiler, 5=Strike, 6=Underline, 7=Quote, 8=Url
+        public int offset;
+        public int length;
+        public String url;
+
+        public EntityData() {}
+
+        public EntityData(int type, int offset, int length, String url) {
+            this.type = type;
+            this.offset = offset;
+            this.length = length;
+            this.url = url;
+        }
+    }
+
+    private static void addUrlEntityIfAbsent(List<EntityData> list, int start, int length, String url) {
+        if (start < 0 || length <= 0 || TextUtils.isEmpty(url)) return;
+        for (EntityData existing : list) {
+            if (existing.type == 8 && existing.offset == start && existing.length == length) {
+                existing.url = url;
+                return;
+            }
+        }
+        list.add(new EntityData(8, start, length, url));
+    }
+
+    public static String serializeSpansToJson(CharSequence text) {
+        if (!(text instanceof Spannable)) return null;
+        Spannable s = (Spannable) text;
+        List<EntityData> list = new ArrayList<>();
+        TextStyleSpan[] spans = s.getSpans(0, s.length(), TextStyleSpan.class);
+        if (spans != null) {
+            for (TextStyleSpan span : spans) {
+                int start = s.getSpanStart(span);
+                int end = s.getSpanEnd(span);
+                if (start < 0 || end <= start) continue;
+                TextStyleSpan.TextStyleRun run = span.getTextStyleRun();
+                if (run == null) continue;
+                int f = run.flags;
+                if ((f & TextStyleSpan.FLAG_STYLE_BOLD) != 0) list.add(new EntityData(1, start, end - start, null));
+                if ((f & TextStyleSpan.FLAG_STYLE_ITALIC) != 0) list.add(new EntityData(2, start, end - start, null));
+                if ((f & TextStyleSpan.FLAG_STYLE_MONO) != 0) list.add(new EntityData(3, start, end - start, null));
+                if ((f & TextStyleSpan.FLAG_STYLE_SPOILER) != 0) list.add(new EntityData(4, start, end - start, null));
+                if ((f & TextStyleSpan.FLAG_STYLE_STRIKE) != 0) list.add(new EntityData(5, start, end - start, null));
+                if ((f & TextStyleSpan.FLAG_STYLE_UNDERLINE) != 0) list.add(new EntityData(6, start, end - start, null));
+                if ((f & TextStyleSpan.FLAG_STYLE_URL) != 0 && run.urlEntity != null && !TextUtils.isEmpty(run.urlEntity.url)) {
+                    addUrlEntityIfAbsent(list, start, end - start, run.urlEntity.url);
+                }
+            }
+        }
+        QuoteSpan.QuoteStyleSpan[] quotes = s.getSpans(0, s.length(), QuoteSpan.QuoteStyleSpan.class);
+        if (quotes != null) {
+            for (QuoteSpan.QuoteStyleSpan q : quotes) {
+                int start = s.getSpanStart(q);
+                int end = s.getSpanEnd(q);
+                if (start >= 0 && end > start) list.add(new EntityData(7, start, end - start, null));
+            }
+        }
+        URLSpanReplacement[] urls = s.getSpans(0, s.length(), URLSpanReplacement.class);
+        if (urls != null) {
+            for (URLSpanReplacement u : urls) {
+                int start = s.getSpanStart(u);
+                int end = s.getSpanEnd(u);
+                if (start >= 0 && end > start && !TextUtils.isEmpty(u.getURL())) {
+                    addUrlEntityIfAbsent(list, start, end - start, u.getURL());
+                }
+            }
+        }
+        URLSpan[] stdUrls = s.getSpans(0, s.length(), URLSpan.class);
+        if (stdUrls != null) {
+            for (URLSpan u : stdUrls) {
+                if (u instanceof URLSpanReplacement) continue;
+                int start = s.getSpanStart(u);
+                int end = s.getSpanEnd(u);
+                if (start >= 0 && end > start && !TextUtils.isEmpty(u.getURL())) {
+                    addUrlEntityIfAbsent(list, start, end - start, u.getURL());
+                }
+            }
+        }
+        if (list.isEmpty()) return null;
+        try {
+            return new Gson().toJson(list);
         } catch (Exception e) {
-            rules.clear();
-            FileLog.e(TAG + ": failed to load rules", e);
+            return null;
         }
     }
 
-    public synchronized void clearAllRules() {
-        rules.clear();
-        saveRules();
+    public static ArrayList<TLRPC.MessageEntity> parseEntitiesFromJson(String json) {
+        ArrayList<TLRPC.MessageEntity> entities = new ArrayList<>();
+        if (json == null || json.isEmpty()) return entities;
+        try {
+            Type type = new TypeToken<List<EntityData>>() {}.getType();
+            List<EntityData> list = new Gson().fromJson(json, type);
+            if (list == null) return entities;
+            for (EntityData e : list) {
+                if (e == null || e.length <= 0) continue;
+                TLRPC.MessageEntity entity = null;
+                if (e.type == 1) entity = new TLRPC.TL_messageEntityBold();
+                else if (e.type == 2) entity = new TLRPC.TL_messageEntityItalic();
+                else if (e.type == 3) entity = new TLRPC.TL_messageEntityCode();
+                else if (e.type == 4) entity = new TLRPC.TL_messageEntitySpoiler();
+                else if (e.type == 5) entity = new TLRPC.TL_messageEntityStrike();
+                else if (e.type == 6) entity = new TLRPC.TL_messageEntityUnderline();
+                else if (e.type == 7) entity = new TLRPC.TL_messageEntityBlockquote();
+                else if (e.type == 8 && e.url != null && !e.url.isEmpty()) {
+                    TLRPC.TL_messageEntityTextUrl urlEntity = new TLRPC.TL_messageEntityTextUrl();
+                    urlEntity.url = e.url;
+                    entity = urlEntity;
+                }
+                if (entity != null) {
+                    entity.offset = e.offset;
+                    entity.length = e.length;
+                    entities.add(entity);
+                }
+            }
+        } catch (Exception ignored) {}
+        return entities;
     }
 
-    public static class AutoReplyRule {
-        public String name;
-        public String keyword;
-        public String response;
-        public boolean enabled = true;
-        public boolean regex;
-
-        public AutoReplyRule(String name, String keyword, String response) {
-            this(name, keyword, response, false);
+    public static void applyVisualLinkSpan(Spannable s, int start, int end, String url) {
+        if (s == null || start < 0 || end <= start || end > s.length() || TextUtils.isEmpty(url)) return;
+        URLSpanReplacement[] oldUrls = s.getSpans(start, end, URLSpanReplacement.class);
+        if (oldUrls != null) {
+            for (URLSpanReplacement old : oldUrls) {
+                s.removeSpan(old);
+            }
         }
+        s.setSpan(new URLSpanReplacement(url), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        s.setSpan(new ForegroundColorSpan(0xFF0EA5E9), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        s.setSpan(new UnderlineSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
 
-        public AutoReplyRule(String name, String keyword, String response, boolean regex) {
-            this.name = name;
-            this.keyword = keyword;
-            this.response = response;
-            this.regex = regex;
+    public static void restoreSpansFromJson(Spannable s, String json) {
+        if (s == null || json == null || json.isEmpty()) return;
+        ArrayList<TLRPC.MessageEntity> entities = parseEntitiesFromJson(json);
+        if (!entities.isEmpty()) {
+            MediaDataController.addTextStyleRuns(entities, s, s);
+            int len = s.length();
+            for (TLRPC.MessageEntity e : entities) {
+                int start = Math.max(0, Math.min(e.offset, len));
+                int end = Math.max(start, Math.min(e.offset + e.length, len));
+                if (end <= start) continue;
+                if (e instanceof TLRPC.TL_messageEntityBlockquote) {
+                    if (s instanceof Editable) {
+                        QuoteSpan.putQuoteToEditable((Editable) s, start, end, false);
+                    } else {
+                        QuoteSpan.putQuote(s, start, end, false);
+                    }
+                } else if (e instanceof TLRPC.TL_messageEntityTextUrl) {
+                    applyVisualLinkSpan(s, start, end, e.url);
+                }
+            }
         }
     }
 }

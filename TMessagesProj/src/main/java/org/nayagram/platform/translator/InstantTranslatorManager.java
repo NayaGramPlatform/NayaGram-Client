@@ -5,6 +5,8 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 
+import org.json.JSONArray;
+
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -16,27 +18,55 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * InstantTranslatorManager - In-Chat Dual-Language Instant Translator for NayaGram.
- * 100% Google Play Store Compliant: Translates incoming messages from foreign languages
- * (English, Arabic, Urdu, Russian, Turkish, etc.) to Bengali ("bn") or user's target language.
- * Includes LRU Cache to prevent redundant network calls and save battery/data.
+ * Tutorial-only translation helper used by the Feature Pipeline language guide.
+ * It is not wired into private chats, groups, channels, or the main feature toggle.
+ * Supports the public tutorial in 28 languages and caches translations in memory.
  */
 public final class InstantTranslatorManager {
-
     private static final String PREFS_NAME = "nayagram_translator_prefs";
     private static final String KEY_TARGET_LANG = "target_language";
-    private static final String DEFAULT_LANG = "bn"; // Bengali
+    private static final String DEFAULT_LANG = "bn"; // Default: Bengali
+
+    public static final String[][] SUPPORTED_LANGUAGES = {
+        {"bn", "বাংলা (Bengali)"},
+        {"en", "English"},
+        {"ar", "العربية (Arabic)"},
+        {"ur", "اردو (Urdu)"},
+        {"hi", "हिन्दी (Hindi)"},
+        {"es", "Español (Spanish)"},
+        {"fr", "Français (French)"},
+        {"de", "Deutsch (German)"},
+        {"ru", "Русский (Russian)"},
+        {"tr", "Türkçe (Turkish)"},
+        {"fa", "فارسی (Persian)"},
+        {"id", "Bahasa Indonesia"},
+        {"ms", "Bahasa Melayu"},
+        {"zh-CN", "简体中文 (Chinese)"},
+        {"ja", "日本語 (Japanese)"},
+        {"ko", "한국어 (Korean)"},
+        {"it", "Italiano (Italian)"},
+        {"pt", "Português (Portuguese)"},
+        {"nl", "Nederlands (Dutch)"},
+        {"pl", "Polski (Polish)"},
+        {"uk", "Українська (Ukrainian)"},
+        {"th", "ไทย (Thai)"},
+        {"vi", "Tiếng Việt (Vietnamese)"},
+        {"ta", "தமிழ் (Tamil)"},
+        {"te", "తెలుగు (Telugu)"},
+        {"uz", "Oʻzbekcha (Uzbek)"},
+        {"ps", "پښتو (Pashto)"},
+        {"sw", "Kiswahili (Swahili)"}
+    };
 
     private static volatile InstantTranslatorManager sInstance;
     private final SharedPreferences preferences;
-    private final ExecutorService executor = Executors.newFixedThreadPool(2);
+    private final ExecutorService executor = Executors.newFixedThreadPool(3);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    // LRU Cache for translated strings (stores up to 300 recent messages)
     private final Map<String, String> translationCache = new LinkedHashMap<String, String>(100, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
-            return size() > 300;
+            return size() > 500;
         }
     };
 
@@ -68,94 +98,76 @@ public final class InstantTranslatorManager {
         preferences.edit().putString(KEY_TARGET_LANG, langCode).apply();
     }
 
-    /**
-     * Asynchronously translate message text. Checks LRU cache first for instant response.
-     */
     public void translate(String text, String targetLang, TranslationCallback callback) {
         if (text == null || text.trim().isEmpty()) {
             if (callback != null) callback.onTranslationFailed(text, "Empty text");
             return;
         }
 
-        final String lang = (targetLang != null && !targetLang.isEmpty()) ? targetLang : getTargetLanguage();
-        final String cacheKey = lang + "::" + text;
-
+        final String cacheKey = targetLang + "::" + text;
         synchronized (translationCache) {
-            if (translationCache.containsKey(cacheKey)) {
-                String cached = translationCache.get(cacheKey);
-                if (callback != null) {
-                    callback.onTranslationSuccess(text, cached, lang);
-                }
+            String cached = translationCache.get(cacheKey);
+            if (cached != null) {
+                if (callback != null) callback.onTranslationSuccess(text, cached, targetLang);
                 return;
             }
         }
 
         executor.execute(() -> {
             try {
-                String encodedText = URLEncoder.encode(text, "UTF-8");
-                String urlStr = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl="
-                        + lang + "&dt=t&q=" + encodedText;
-
+                String encoded = URLEncoder.encode(text, "UTF-8");
+                String urlStr = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" 
+                        + targetLang + "&dt=t&q=" + encoded;
                 URL url = new URL(urlStr);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
                 conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setConnectTimeout(6000);
+                conn.setReadTimeout(6000);
 
                 if (conn.getResponseCode() == 200) {
                     BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                    StringBuilder sb = new StringBuilder();
+                    StringBuilder response = new StringBuilder();
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        sb.append(line);
+                        response.append(line);
                     }
                     reader.close();
 
-                    String rawJson = sb.toString();
-                    String translated = parseGtxResponse(rawJson);
+                    String raw = response.toString();
+                    StringBuilder parsed = new StringBuilder();
+                    try {
+                        JSONArray rootArray = new JSONArray(raw);
+                        JSONArray sentences = rootArray.getJSONArray(0);
+                        for (int i = 0; i < sentences.length(); i++) {
+                            JSONArray sentence = sentences.getJSONArray(i);
+                            if (sentence.length() > 0 && !sentence.isNull(0)) {
+                                parsed.append(sentence.getString(0));
+                            }
+                        }
+                    } catch (Exception parseEx) {
+                        parsed.append(text);
+                    }
 
+                    String result = parsed.length() > 0 ? parsed.toString() : text;
                     synchronized (translationCache) {
-                        translationCache.put(cacheKey, translated);
+                        translationCache.put(cacheKey, result);
                     }
 
                     mainHandler.post(() -> {
-                        if (callback != null) {
-                            callback.onTranslationSuccess(text, translated, lang);
-                        }
+                        if (callback != null) callback.onTranslationSuccess(text, result, targetLang);
                     });
                 } else {
-                    final int responseCode = conn.getResponseCode();
+                    final int respCode = conn.getResponseCode();
                     mainHandler.post(() -> {
-                        if (callback != null) {
-                            callback.onTranslationFailed(text, "HTTP " + responseCode);
-                        }
+                        if (callback != null) callback.onTranslationFailed(text, "HTTP " + respCode);
                     });
                 }
-                conn.disconnect();
             } catch (Exception e) {
                 mainHandler.post(() -> {
-                    if (callback != null) {
-                        callback.onTranslationFailed(text, e.getMessage());
-                    }
+                    if (callback != null) callback.onTranslationFailed(text, e.getMessage());
                 });
             }
         });
-    }
-
-            private String parseGtxResponse(String rawJson) {
-        try {
-            // Standard gtx response: [[["translated text","original text",null,null,...]]]
-            int firstQuote = rawJson.indexOf('"');
-            if (firstQuote != -1) {
-                int secondQuote = rawJson.indexOf('"', firstQuote + 1);
-                if (secondQuote != -1) {
-                    return rawJson.substring(firstQuote + 1, secondQuote)
-                            .replace("\\n", "\n")
-                            .replace("\\\"", "\"");
-                }
-            }
-        } catch (Exception ignored) {}
-        return rawJson;
     }
 }

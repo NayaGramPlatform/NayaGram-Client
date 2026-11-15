@@ -14,6 +14,7 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.InputType;
 import android.text.TextUtils;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -71,11 +72,52 @@ public class VoIPHelper {
 
 	public static long lastCallTime = 0;
 
+	private static void safeCreateGroupCall(Activity activity, AccountInstance account, TLRPC.Chat chat, TLRPC.InputPeer peer, boolean hasFew, String hash) {
+		if (!(activity instanceof LaunchActivity) || activity.isFinishing()) {
+			android.util.Log.e("NayaGramCall", "skip GroupCallActivity.create");
+			return;
+		}
+		try {
+			GroupCallActivity.create((LaunchActivity) activity, account, chat, peer, hasFew, hash);
+		} catch (Throwable e) {
+			android.util.Log.e("NayaGramCall", "GroupCallActivity.create", e);
+		}
+	}
+
+
 	private static final int VOIP_SUPPORT_ID = 4244000;
 
 	public static void startCall(TLRPC.User user, boolean videoCall, boolean canVideoCall, final Activity activity, TLRPC.UserFull userFull, AccountInstance accountInstance) {
-		if (accountInstance == null ? MessagesController.getInstance(UserConfig.selectedAccount).isFrozen() : accountInstance.getMessagesController().isFrozen()) {
-			AccountFrozenAlert.show(accountInstance == null ? UserConfig.selectedAccount : accountInstance.getCurrentAccount());
+		if (activity == null || activity.isFinishing()) {
+			return;
+		}
+        try {
+            org.nayagram.platform.diagnostics.VoIPCrashDiagnostics.logCallState("startCall_initiated", user != null ? user.id : 0, videoCall);
+        } catch (Throwable t) {
+            org.nayagram.platform.diagnostics.VoIPCrashDiagnostics.logNativeFailure("startCall", t.getMessage());
+        }
+
+		if (accountInstance == null) {
+			accountInstance = AccountInstance.getInstance(UserConfig.selectedAccount);
+		}
+		final AccountInstance finalAccountInstance = accountInstance;
+		int currentAccount = finalAccountInstance.getCurrentAccount();
+		if (!org.nayagram.platform.bot.NGBotAccountGuard.checkCallSupported(activity, currentAccount)) {
+			return;
+		}
+		startCallInternal(user, videoCall, canVideoCall, activity, userFull, accountInstance);
+	}
+
+	private static void startCallInternal(TLRPC.User user, boolean videoCall, boolean canVideoCall, final Activity activity, TLRPC.UserFull userFull, AccountInstance accountInstance) {
+		if (activity == null || activity.isFinishing() || user == null) {
+			return;
+		}
+		if (accountInstance == null) {
+			accountInstance = AccountInstance.getInstance(UserConfig.selectedAccount);
+		}
+		final AccountInstance finalAccountInstance2 = accountInstance;
+		if (finalAccountInstance2.getMessagesController().isFrozen()) {
+			AccountFrozenAlert.show(accountInstance.getCurrentAccount());
 			return;
 		}
 		if (userFull != null && userFull.phone_calls_private) {
@@ -153,14 +195,18 @@ public class VoIPHelper {
 	}
 
 	private static void initiateCall(TLRPC.User user, TLRPC.Chat chat, String hash, boolean videoCall, boolean canVideoCall, boolean createCall, Boolean checkJoiner, final Activity activity, BaseFragment fragment, AccountInstance accountInstance) {
-		if (activity == null || user == null && chat == null) {
+		if (activity == null || activity.isFinishing() || (user == null && chat == null)) {
 			return;
 		}
+		if (accountInstance == null) {
+			accountInstance = AccountInstance.getInstance(UserConfig.selectedAccount);
+		}
+		final AccountInstance finalAccountInstance3 = accountInstance;
 		VoIPService voIPService = VoIPService.getSharedInstance();
 		if (voIPService != null) {
 			long newId = user != null ? user.id : -chat.id;
 			long callerId = voIPService.getCallerId();
-			if (callerId != newId || voIPService.getAccount() != accountInstance.getCurrentAccount()) {
+			if (callerId != newId || voIPService.getAccount() != finalAccountInstance3.getCurrentAccount()) {
 				String newName;
 				String oldName;
 				int key2;
@@ -191,7 +237,7 @@ public class VoIPHelper {
 					oldName = sb.toString();
 				} else if (callerId > 0) {
 					TLRPC.User callUser = voIPService.getUser();
-					oldName = ContactsController.formatName(callUser.first_name, callUser.last_name);
+					oldName = callUser != null ? ContactsController.formatName(callUser.first_name, callUser.last_name) : LocaleController.getString(R.string.VoipOngoingAlertTitle);
 					if (newId > 0) {
 						key2 = R.string.VoipOngoingAlert;
 					} else {
@@ -199,7 +245,7 @@ public class VoIPHelper {
 					}
 				} else {
 					TLRPC.Chat callChat = voIPService.getChat();
-					oldName = callChat.title;
+					oldName = callChat != null && callChat.title != null ? callChat.title : LocaleController.getString(R.string.VoipOngoingChatAlertTitle);
 					if (newId > 0) {
 						key2 = R.string.VoipOngoingChatAlert2;
 					} else {
@@ -219,10 +265,10 @@ public class VoIPHelper {
 							if (VoIPService.getSharedInstance() != null) {
 								VoIPService.getSharedInstance().hangUp(() -> {
 									lastCallTime = 0;
-									doInitiateCall(user, chat, hash, null, false, videoCall, canVideoCall, createCall, activity, fragment, accountInstance, true, true);
+									doInitiateCall(user, chat, hash, null, false, videoCall, canVideoCall, createCall, activity, fragment, finalAccountInstance3, true, true);
 								});
 							} else {
-								doInitiateCall(user, chat, hash, null, false, videoCall, canVideoCall, createCall, activity, fragment, accountInstance, true, true);
+								doInitiateCall(user, chat, hash, null, false, videoCall, canVideoCall, createCall, activity, fragment, finalAccountInstance3, true, true);
 							}
 						})
 						.setNegativeButton(LocaleController.getString(R.string.Cancel), null)
@@ -234,7 +280,7 @@ public class VoIPHelper {
 					if (!TextUtils.isEmpty(hash)) {
 						voIPService.setGroupCallHash(hash);
 					}
-					GroupCallActivity.create((LaunchActivity) activity, AccountInstance.getInstance(UserConfig.selectedAccount), null, null, false, null);
+					safeCreateGroupCall(activity, AccountInstance.getInstance(UserConfig.selectedAccount), null, null, false, null);
 				}
 			}
 		} else if (VoIPService.callIShouldHavePutIntoIntent == null) {
@@ -292,16 +338,25 @@ public class VoIPHelper {
 		intent.putExtra("video_call", Build.VERSION.SDK_INT >= 18 && videoCall);
 		intent.putExtra("can_video_call", Build.VERSION.SDK_INT >= 18 && /*canVideoCall*/ true);
 		try {
-			activity.startService(intent);
+			if (Build.VERSION.SDK_INT >= 26) {
+				activity.startForegroundService(intent);
+			} else {
+				activity.startService(intent);
+			}
 		} catch (Throwable e) {
+			Log.e("NayaGramCall", "joinConference", e);
 			FileLog.e(e);
 		}
 	}
 
 	private static void doInitiateCall(TLRPC.User user, TLRPC.Chat chat, String hash, TLRPC.InputPeer peer, boolean hasFewPeers, boolean videoCall, boolean canVideoCall, boolean createCall, Activity activity, BaseFragment fragment, AccountInstance accountInstance, boolean checkJoiner, boolean checkAnonymous, boolean isRtmpStream) {
-		if (activity == null || user == null && chat == null) {
+		if (activity == null || activity.isFinishing() || (user == null && chat == null)) {
 			return;
 		}
+		if (accountInstance == null) {
+			accountInstance = AccountInstance.getInstance(UserConfig.selectedAccount);
+		}
+		final AccountInstance finalAccount = accountInstance;
 		if (SystemClock.elapsedRealtime() - lastCallTime < (chat != null ? 200 : 2000)) {
 			return;
 		}
@@ -315,14 +370,14 @@ public class VoIPHelper {
 						JoinCallByUrlAlert alert = new JoinCallByUrlAlert(activity, chat) {
 							@Override
 							protected void onJoin() {
-								doInitiateCall(user, chat, hash, inputPeer, true, videoCall, canVideoCall, false, activity, fragment, accountInstance, false, false);
+								doInitiateCall(user, chat, hash, inputPeer, true, videoCall, canVideoCall, false, activity, fragment, finalAccount, false, false);
 							}
 						};
 						if (fragment != null) {
 							fragment.showDialog(alert);
 						}
 					} else {
-						doInitiateCall(user, chat, hash, inputPeer, !param, videoCall, canVideoCall, false, activity, fragment, accountInstance, false, false);
+						doInitiateCall(user, chat, hash, inputPeer, !param, videoCall, canVideoCall, false, activity, fragment, finalAccount, false, false);
 					}
 				});
 				return;
@@ -331,19 +386,19 @@ public class VoIPHelper {
 		if (checkJoiner && chat != null) {
 			JoinCallAlert.open(activity, -chat.id, accountInstance, fragment, createCall ? JoinCallAlert.TYPE_CREATE : JoinCallAlert.TYPE_JOIN, null, (selectedPeer, hasFew, schedule, rtmp) -> {
 				if (createCall && schedule) {
-					GroupCallActivity.create((LaunchActivity) activity, accountInstance, chat, selectedPeer, hasFew, hash);
+					safeCreateGroupCall(activity, finalAccount, chat, selectedPeer, hasFew, hash);
 				} else if (!hasFew && hash != null) {
 					JoinCallByUrlAlert alert = new JoinCallByUrlAlert(activity, chat) {
 						@Override
 						protected void onJoin() {
-							doInitiateCall(user, chat, hash, selectedPeer, false, videoCall, canVideoCall, createCall, activity, fragment, accountInstance, false, true, rtmp);
+							doInitiateCall(user, chat, hash, selectedPeer, false, videoCall, canVideoCall, createCall, activity, fragment, finalAccount, false, true, rtmp);
 						}
 					};
 					if (fragment != null) {
 						fragment.showDialog(alert);
 					}
 				} else {
-					doInitiateCall(user, chat, hash, selectedPeer, hasFew, videoCall, canVideoCall, createCall, activity, fragment, accountInstance, false, true, rtmp);
+					doInitiateCall(user, chat, hash, selectedPeer, hasFew, videoCall, canVideoCall, createCall, activity, fragment, finalAccount, false, true, rtmp);
 				}
 			});
 			return;
@@ -352,7 +407,7 @@ public class VoIPHelper {
 			new AlertDialog.Builder(activity)
 					.setTitle(ChatObject.isChannelOrGiga(chat) ? LocaleController.getString(R.string.VoipChannelVoiceChat) : LocaleController.getString(R.string.VoipGroupVoiceChat))
 					.setMessage(ChatObject.isChannelOrGiga(chat) ? LocaleController.getString(R.string.VoipChannelJoinAnonymouseAlert) : LocaleController.getString(R.string.VoipGroupJoinAnonymouseAlert))
-					.setPositiveButton(LocaleController.getString(R.string.VoipChatJoin), (dialog, which) -> doInitiateCall(user, chat, hash, peer, false, videoCall, canVideoCall, createCall, activity, fragment, accountInstance, false, false))
+					.setPositiveButton(LocaleController.getString(R.string.VoipChatJoin), (dialog, which) -> doInitiateCall(user, chat, hash, peer, false, videoCall, canVideoCall, createCall, activity, fragment, finalAccount, false, false))
 					.setNegativeButton(LocaleController.getString(R.string.Cancel), null)
 					.show();
 			return;
@@ -380,7 +435,7 @@ public class VoIPHelper {
 		if (chat != null && !createCall) {
 			ChatObject.Call call = accountInstance.getMessagesController().getGroupCall(chat.id, false);
 			if (call != null && call.isScheduled()) {
-				GroupCallActivity.create((LaunchActivity) activity, accountInstance, chat, peer, hasFewPeers, hash);
+				safeCreateGroupCall(activity, accountInstance, chat, peer, hasFewPeers, hash);
 				return;
 			}
 		}
@@ -406,15 +461,19 @@ public class VoIPHelper {
 		intent.putExtra("start_incall_activity", true);
 		intent.putExtra("video_call", Build.VERSION.SDK_INT >= 18 && videoCall);
 		intent.putExtra("can_video_call", Build.VERSION.SDK_INT >= 18 && canVideoCall);
-		intent.putExtra("account", UserConfig.selectedAccount);
+		intent.putExtra("account", accountInstance != null ? accountInstance.getCurrentAccount() : UserConfig.selectedAccount);
 		try {
-			activity.startService(intent);
+			if (Build.VERSION.SDK_INT >= 26) {
+				activity.startForegroundService(intent);
+			} else {
+				activity.startService(intent);
+			}
 		} catch (Throwable e) {
+			Log.e("NayaGramCall", "doInitiateCall", e);
 			FileLog.e(e);
 		}
 	}
 
-	@TargetApi(Build.VERSION_CODES.M)
 	public static void permissionDenied(final Activity activity, final Runnable onFinish, int code) {
 		boolean mergedRequest = code == 102;
 		if (!activity.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) || mergedRequest && !activity.shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {

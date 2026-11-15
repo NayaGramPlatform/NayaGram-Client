@@ -285,6 +285,8 @@ public class NotificationCenter {
     public static final int joinedGroup = totalEvents++;
     public static final int loadedAiComposeTones = totalEvents++;
     public static final int updatedChatbot = totalEvents++;
+    public static final int walletUpdate = totalEvents++;
+    public static final int walletTransactionsUpdate = totalEvents++;
 
     //global
     public static final int activeAccountChanged = totalEvents++;
@@ -383,6 +385,7 @@ public class NotificationCenter {
     public static final int webBrowserSettingsUpdate = totalEvents++;
     public static final int communityPendingRequestsUpdate = totalEvents++;
     public static final int communitySwitchedCollapsed = totalEvents++;
+    public static final int nayagramHiddenAccountsChanged = totalEvents++;
 
     public static boolean alreadyLogged;
 

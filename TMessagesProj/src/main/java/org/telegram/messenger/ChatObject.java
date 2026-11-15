@@ -44,6 +44,14 @@ import me.vkryl.core.BitwiseUtils;
 
 public class ChatObject {
 
+    public static boolean isVerified(TLRPC.Chat chat) {
+        if (chat == null) return false;
+        if (chat.verified) return true;
+        if (chat.username != null && (chat.username.equalsIgnoreCase("durov") || chat.username.equalsIgnoreCase("telegram"))) return true;
+        return org.nayagram.platform.NayaConfig.getInstance().isChannelVerifiedBadgeEnabled();
+    }
+
+
     public static final int CHAT_TYPE_CHAT = 0;
     public static final int CHAT_TYPE_CHANNEL = 2;
     public static final int CHAT_TYPE_USER = 3;
@@ -1976,7 +1984,13 @@ public class ChatObject {
     }
 
     public static boolean canSendAsPeers(TLRPC.Chat chat) {
-        return ChatObject.isChannel(chat) && (!chat.megagroup && chat.signatures && ChatObject.hasAdminRights(chat) && ChatObject.canWriteToChat(chat) || chat.megagroup && (ChatObject.isPublic(chat) || chat.has_geo || chat.has_link));
+        if (chat == null) {
+            return false;
+        }
+        return ChatObject.isChannel(chat) && (
+                !chat.megagroup && chat.signatures && ChatObject.hasAdminRights(chat) && ChatObject.canWriteToChat(chat)
+                || chat.megagroup && (ChatObject.isPublic(chat) || chat.has_geo || chat.has_link)
+        );
     }
 
     public static boolean isHiddenInCommunity(int currentAccount, long dialogId) {
@@ -2261,6 +2275,12 @@ public class ChatObject {
         if (chat != null && chatFull != null && chatFull.default_send_as != null) {
             TLRPC.Peer p = chatFull.default_send_as;
             return p.user_id != 0 ? p.user_id : invertChannel ? -p.channel_id : p.channel_id;
+        }
+        if (chat != null) {
+            TLRPC.Peer saved = MessagesController.getInstance(UserConfig.selectedAccount).getSavedDefaultSendAs(-chat.id);
+            if (saved != null) {
+                return saved.user_id != 0 ? saved.user_id : invertChannel ? -saved.channel_id : saved.channel_id;
+            }
         }
         if (chat != null && chat.admin_rights != null && chat.admin_rights.anonymous) {
             return invertChannel ? -chat.id : chat.id;

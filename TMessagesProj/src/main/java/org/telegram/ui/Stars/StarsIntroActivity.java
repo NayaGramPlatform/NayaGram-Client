@@ -97,7 +97,6 @@ import org.telegram.tgnet.tl.TL_stars;
 import org.telegram.tgnet.tl.TL_stories;
 import org.telegram.ui.AccountFrozenAlert;
 import org.telegram.ui.ActionBar.ActionBar;
-import org.telegram.ui.ActionBar.BackDrawable;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.BottomSheet;
 import org.telegram.ui.ActionBar.SimpleTextView;
@@ -292,7 +291,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
         iconTextureView.mRenderer.updateColors();
         iconTextureView.setStarParticlesView(particlesView);
         aboveTitleView.addView(iconTextureView, LayoutHelper.createFrame(190, 190, Gravity.CENTER, 0, 12, 0, 24));
-        configureHeader(getString(R.string.TelegramStars), AndroidUtilities.replaceArrows(AndroidUtilities.replaceSingleTag(getString(R.string.TelegramStarsInfo2), () -> {
+        configureHeader(getString(R.string.NayaGramStars), AndroidUtilities.replaceArrows(AndroidUtilities.replaceSingleTag(getString(R.string.NayaGramStarsInfo2), () -> {
             new ExplainStarsSheet(context).show();
         }), true), aboveTitleView, null);
 
@@ -327,7 +326,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
 
         starBalanceIcon = new SpannableStringBuilder("S");
         final ImageReceiverSpan starBalanceIconSpan = new ImageReceiverSpan(starBalanceTextView, currentAccount, 42);
-        starBalanceIconSpan.imageReceiver.setImageBitmap(new RLottieDrawable(R.raw.star_reaction, "s" + R.raw.star_reaction, dp(42), dp(42)));
+        starBalanceIconSpan.imageReceiver.setImageBitmap(new RLottieDrawable(R.raw.star_reaction, dp(42), dp(42)));
         starBalanceIconSpan.imageReceiver.setAutoRepeat(2);
         starBalanceIconSpan.enableShadow(false);
         starBalanceIconSpan.translate(-dp(3), 0);
@@ -402,7 +401,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
         SpannableStringBuilder sb2 = new SpannableStringBuilder();
         sb2.append("G  ");
         sb2.setSpan(new ColoredImageSpan(R.drawable.menu_stars_gift), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        sb2.append(LocaleController.getString(R.string.TelegramStarsGift));
+        sb2.append(LocaleController.getString(R.string.NayaGramStarsGift));
         giftButton.setText(sb2, false);
         giftButton.setOnClickListener(v -> {
             StarsController.getInstance(currentAccount).getGiftOptions();
@@ -1559,6 +1558,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
             ton = new SpannableString("TON");
             drawable = context.getResources().getDrawable(R.drawable.mini_gram_72).mutate();
             ColoredImageSpan span = new ColoredImageSpan(drawable);
+            span.recolorDrawable = false;
             span.setSize(dp(18));
             span.setTranslateY(dp(.5f));
             ton.setSpan(span, 0, ton.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -2569,7 +2569,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
         private final int BUTTON_EXPAND = -1;
 
         public void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
-            items.add(UItem.asHeader(getString(R.string.TelegramStarsChoose)));
+            items.add(UItem.asHeader(getString(R.string.NayaGramStarsChoose)));
             int stars = 1;
             ArrayList<TL_stars.TL_starsTopupOption> options = StarsController.getInstance(currentAccount).getOptions();
             if (options != null && !options.isEmpty()) {
@@ -2799,7 +2799,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
             if (TextUtils.isEmpty(stringRes)) {
                 headerView.subtitleView.setText("");
             } else {
-                String str = LocaleController.nullable(formatString(stringRes, LocaleController.getStringResId(stringRes), botName));
+                String str = LocaleController.nullable(formatString(stringRes, 0, botName));
                 if (str == null) {
                     str = getString(stringRes);
                 }
@@ -2852,7 +2852,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
         public void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
             items.add(UItem.asCustomShadow(headerView));
             if (canBuy) {
-                items.add(UItem.asHeader(getString(R.string.TelegramStarsChoose)));
+                items.add(UItem.asHeader(getString(R.string.NayaGramStarsChoose)));
             }
             int stars = 1;
             ArrayList<TL_stars.TL_starsTopupOption> options = StarsController.getInstance(currentAccount).getOptions();
@@ -2879,7 +2879,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
                 if (count < 3) {
                     items.clear();
                     items.add(UItem.asCustom(headerView));
-                    items.add(UItem.asHeader(getString(R.string.TelegramStarsChoose)));
+                    items.add(UItem.asHeader(getString(R.string.NayaGramStarsChoose)));
                     count = 0;
                     for (int id = 0; id < options.size(); ++id) {
                         TL_stars.TL_starsTopupOption option = options.get(id);
@@ -3141,7 +3141,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
 
         public void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
             items.add(UItem.asCustom(headerView));
-            items.add(UItem.asHeader(getString(R.string.TelegramStarsChoose)));
+            items.add(UItem.asHeader(getString(R.string.NayaGramStarsChoose)));
             int stars = 1;
             ArrayList<TL_stars.TL_starsGiftOption> options = StarsController.getInstance(currentAccount).getGiftOptions();
             if (options != null && !options.isEmpty()) {
@@ -3332,6 +3332,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
         span.translate(tx, ty);
         span.spaceScaleX = sx;
         if (ton) {
+            span.recolorDrawable = false;
             span.setScale(scale * 0.2f, scale * 0.2f);
         } else {
             span.setScale(scale, scale);
@@ -3403,6 +3404,9 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
             span = new ColoredImageSpan(ton ? R.drawable.mini_gram_72 : R.drawable.msg_premium_liststar);
             span.setScale(ton ? 0.222f : 1.13f, ton ? 0.222f : 1.13f);
         }
+        if (ton) {
+            span.recolorDrawable = false;
+        }
         if (spanRef != null) {
             spanRef[0] = span;
         }
@@ -3449,10 +3453,9 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
         } else {
             span = new ColoredImageSpan(resId);
         }
+        span.recolorDrawable = false;
         if (ton) {
             scale *= .33f;
-        } else {
-            span.recolorDrawable = false;
         }
         span.setScale(scale, scale);
         spacedStar.setSpan(span, 0, spacedStar.length() - 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -5689,7 +5692,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
         });
     }
 
-    private static DecimalFormat floatFormat2;
+    public static DecimalFormat floatFormat2;
     public static String formatTON(long ton) {
         if (floatFormat2 == null)
             floatFormat2 = new DecimalFormat("0.####", new DecimalFormatSymbols(Locale.US));
@@ -5706,7 +5709,7 @@ public class StarsIntroActivity extends GradientHeaderActivity implements Notifi
     private static DecimalFormat floatFormat;
     public static CharSequence formatStarsAmount(TL_stars.StarsAmount starsAmount, float relativeSize, char symbol) {
         if (floatFormat == null)
-            floatFormat = new DecimalFormat("0.################", new DecimalFormatSymbols(Locale.US));
+            floatFormat = new DecimalFormat("0.###", new DecimalFormatSymbols(Locale.US));
         SpannableStringBuilder ssb = new SpannableStringBuilder();
         if (starsAmount instanceof TL_stars.TL_starsTonAmount) {
             if (starsAmount.amount % 1_000_000_000 != 0) {

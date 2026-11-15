@@ -1,200 +1,308 @@
 package org.nayagram.platform.monetization;
 
+import android.app.Activity;
 import android.content.Context;
-import android.content.SharedPreferences;
-import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
-import android.util.TypedValue;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
+import android.util.DisplayMetrics;
 
-import org.telegram.messenger.AndroidUtilities;
-import org.telegram.ui.ActionBar.Theme;
+import androidx.annotation.NonNull;
+
+import com.google.android.gms.ads.AdError;
+import com.google.android.gms.ads.AdRequest;
+import com.google.android.gms.ads.AdSize;
+import com.google.android.gms.ads.AdView;
+import com.google.android.gms.ads.FullScreenContentCallback;
+import com.google.android.gms.ads.LoadAdError;
+import com.google.android.gms.ads.MobileAds;
+import com.google.android.gms.ads.interstitial.InterstitialAd;
+import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
+import com.google.android.ump.ConsentInformation;
+import com.google.android.ump.ConsentRequestParameters;
+import com.google.android.ump.UserMessagingPlatform;
+
+import org.telegram.messenger.NayaGramAdsConfig;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.lang.ref.WeakReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * AdMobIntegrationManager - Future Monetization & Clean Native Ads Architecture.
- * 
- * Strategy & Google Play Policy Compliance:
- * 1. DISABLED BY DEFAULT: No ads shown during initial 3-5 months to build trust and organic user growth.
- * 2. ZERO USER ANNOYANCE: Never displays interstitial popups or blocking overlays.
- * 3. NO ADS IN 1-ON-1 PRIVATE CHATS: Ads only appear in public channels or discovery screens.
- * 4. CLEAR SPONSORED DISCLOSURE: Complies with Google Play Developer Policy for transparency.
- * 5. REMOTE ACTIVATION READY: Can be toggled on smoothly without recompiling core chat logic.
+ * Google Mobile Ads adapter.
+ *
+ * Ads remain disabled by the central policy until a production account and
+ * ad-unit IDs are configured. Consent is refreshed before the SDK requests ads.
  */
-public final class AdMobIntegrationManager {
+public final class AdMobIntegrationManager implements INGMonetizationProvider {
 
-    private static final String PREFS_NAME = "nayagram_monetization_prefs";
-    private static final String KEY_ADS_ENABLED = "admob_ads_enabled";
-    private static final String KEY_ACTIVATION_TIMESTAMP = "admob_activation_timestamp";
-    private static final String KEY_BANNER_AD_UNIT_ID = "admob_banner_unit_id";
-    private static final String KEY_NATIVE_AD_UNIT_ID = "admob_native_unit_id";
+    private static final String TAG = "NayaGramAdMob";
+    private static final long RETRY_DELAY_MS = 60_000L;
 
-    // Standard AdMob Test Ad Unit IDs (Google Official Test IDs)
-    public static final String DEFAULT_TEST_BANNER_ID = "ca-app-pub-3940256099942544/6300978111";
-    public static final String DEFAULT_TEST_NATIVE_ID = "ca-app-pub-3940256099942544/2247696110";
+    private static volatile AdMobIntegrationManager instance;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final AtomicBoolean initializationStarted = new AtomicBoolean(false);
+    private volatile Context appContext;
+    private volatile boolean sdkInitialized;
+    private volatile InterstitialAd interstitialAd;
+    private final List<WeakReference<FrameLayout>> pendingBannerContainers =
+        Collections.synchronizedList(new ArrayList<>());
 
-    private static volatile AdMobIntegrationManager sInstance;
-    private final SharedPreferences preferences;
+    private AdMobIntegrationManager() { }
 
-    private AdMobIntegrationManager(Context context) {
-        this.preferences = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-    }
-
-    public static AdMobIntegrationManager getInstance(Context context) {
-        if (sInstance == null) {
+    public static AdMobIntegrationManager getInstance() {
+        if (instance == null) {
             synchronized (AdMobIntegrationManager.class) {
-                if (sInstance == null) {
-                    sInstance = new AdMobIntegrationManager(context);
+                if (instance == null) {
+                    instance = new AdMobIntegrationManager();
                 }
             }
         }
-        return sInstance;
+        return instance;
+    }
+
+    @Override
+    public boolean isMonetizationEnabled() {
+        return NayaGramAdsConfig.ENABLE_ADS && sdkInitialized;
+    }
+
+    @Override
+    public void initialize(Context context) {
+        if (!NayaGramAdsConfig.ENABLE_ADS || context == null) {
+            Log.i(TAG, "Ads are disabled by policy; SDK initialization skipped.");
+            return;
+        }
+        if (!(context instanceof Activity)) {
+            Log.w(TAG, "Consent must be handled from an Activity; deferring ad initialization.");
+            return;
+        }
+        if (!initializationStarted.compareAndSet(false, true)) {
+            return;
+        }
+
+        appContext = context.getApplicationContext();
+        Activity activity = (Activity) context;
+        ConsentInformation consentInformation = UserMessagingPlatform.getConsentInformation(activity);
+        ConsentRequestParameters parameters = new ConsentRequestParameters.Builder().build();
+
+        consentInformation.requestConsentInfoUpdate(
+            activity,
+            parameters,
+            () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity, formError -> {
+                if (formError != null) {
+                    Log.w(TAG, "Consent form did not complete: " + formError.getMessage());
+                }
+                initializeIfConsentAllows(consentInformation);
+            }),
+            requestError -> {
+                Log.w(TAG, "Consent info update failed: " + requestError.getMessage());
+                // A previously saved consent state may still permit requests.
+                initializeIfConsentAllows(consentInformation);
+            }
+        );
+    }
+
+    private void initializeIfConsentAllows(ConsentInformation consentInformation) {
+        if (!NayaGramAdsConfig.ENABLE_ADS || !consentInformation.canRequestAds()) {
+            initializationStarted.set(false);
+            Log.i(TAG, "Ad requests are blocked until consent requirements are satisfied.");
+            return;
+        }
+        final Context context = appContext;
+        if (context == null) return;
+
+        new Thread(() -> {
+            try {
+                MobileAds.initialize(context, initializationStatus -> {
+                    sdkInitialized = true;
+                    loadInterstitial();
+                    attachPendingBanners();
+                    Log.i(TAG, "Google Mobile Ads SDK initialized.");
+                });
+            } catch (RuntimeException error) {
+                initializationStarted.set(false);
+                Log.e(TAG, "Google Mobile Ads initialization failed.", error);
+            }
+        }, "NayaGram-AdMob-Init").start();
+    }
+
+    private void loadInterstitial() {
+        final Context context = appContext;
+        if (context == null || !NayaGramAdsConfig.ENABLE_ADS || !sdkInitialized) {
+            return;
+        }
+        try {
+            InterstitialAd.load(
+                context,
+                NayaGramAdsConfig.INTERSTITIAL_AD_UNIT_ID,
+                new AdRequest.Builder().build(),
+                new InterstitialAdLoadCallback() {
+                    @Override
+                    public void onAdLoaded(@NonNull InterstitialAd ad) {
+                        interstitialAd = ad;
+                        Log.d(TAG, "Interstitial ad loaded.");
+                    }
+
+                    @Override
+                    public void onAdFailedToLoad(@NonNull LoadAdError error) {
+                        interstitialAd = null;
+                        Log.w(TAG, "Interstitial load failed: " + error.getMessage());
+                        if (NayaGramAdsConfig.ENABLE_ADS) {
+                            mainHandler.postDelayed(AdMobIntegrationManager.this::loadInterstitial, RETRY_DELAY_MS);
+                        }
+                    }
+                }
+            );
+        } catch (RuntimeException error) {
+            interstitialAd = null;
+            Log.e(TAG, "Could not request an interstitial ad.", error);
+        }
+    }
+
+
+
+    /** Present Google's privacy choices form from the app's Privacy & Security screen. */
+    public void showPrivacyOptionsForm(Activity activity) {
+        if (activity == null || activity.isFinishing()
+                || (android.os.Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) {
+            return;
+        }
+        ConsentInformation consentInformation = UserMessagingPlatform.getConsentInformation(activity);
+        if (consentInformation.getPrivacyOptionsRequirementStatus()
+                != ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED) {
+            Log.i(TAG, "Privacy options form is not required for the current consent state.");
+            return;
+        }
+        UserMessagingPlatform.showPrivacyOptionsForm(activity, formError -> {
+            if (formError != null) {
+                Log.w(TAG, "Privacy options form failed: " + formError.getMessage());
+            }
+        });
     }
 
     /**
-     * Check if ads are active. By default, returns FALSE for the initial 3-5 months.
+     * Attach a banner to an explicitly supplied home/dialogs-screen container.
+     * Containers are queued while UMP consent or SDK initialization is pending.
      */
-    public boolean isAdsActive() {
-        return preferences.getBoolean(KEY_ADS_ENABLED, false);
+    public void attachBanner(Activity activity, FrameLayout container) {
+        if (!NayaGramAdsConfig.shouldShowBanner() || activity == null || container == null) {
+            return;
+        }
+        if (activity.isFinishing() || (android.os.Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) {
+            return;
+        }
+        if (!sdkInitialized) {
+            pendingBannerContainers.add(new WeakReference<>(container));
+            return;
+        }
+        mainHandler.post(() -> attachBannerNow(container));
     }
 
-    /**
-     * Remotely or locally enable ads when ready after 3-5 months.
-     */
-    public void setAdsActive(boolean active) {
-        preferences.edit()
-                .putBoolean(KEY_ADS_ENABLED, active)
-                .putLong(KEY_ACTIVATION_TIMESTAMP, System.currentTimeMillis())
-                .apply();
+
+    /** Release banner resources when the owning dialogs fragment is destroyed. */
+    public void destroyBanner(FrameLayout container) {
+        if (container == null) return;
+        mainHandler.post(() -> {
+            for (int i = container.getChildCount() - 1; i >= 0; i--) {
+                View child = container.getChildAt(i);
+                if (child instanceof AdView) {
+                    ((AdView) child).destroy();
+                }
+            }
+            container.removeAllViews();
+        });
     }
 
-    public void configureAdUnitIds(String bannerUnitId, String nativeUnitId) {
-        preferences.edit()
-                .putString(KEY_BANNER_AD_UNIT_ID, bannerUnitId)
-                .putString(KEY_NATIVE_AD_UNIT_ID, nativeUnitId)
-                .apply();
+    private void attachPendingBanners() {
+        synchronized (pendingBannerContainers) {
+            for (WeakReference<FrameLayout> reference : pendingBannerContainers) {
+                FrameLayout container = reference.get();
+                if (container != null) {
+                    mainHandler.post(() -> attachBannerNow(container));
+                }
+            }
+            pendingBannerContainers.clear();
+        }
     }
 
-    public String getBannerUnitId() {
-        return preferences.getString(KEY_BANNER_AD_UNIT_ID, DEFAULT_TEST_BANNER_ID);
+    private void attachBannerNow(FrameLayout container) {
+        if (!NayaGramAdsConfig.shouldShowBanner() || container == null) return;
+        if (container.getChildCount() > 0) return;
+        Context context = container.getContext();
+        try {
+            DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+            int widthDp = Math.max(1, (int) (metrics.widthPixels / metrics.density));
+            AdView banner = new AdView(context);
+            banner.setAdUnitId(NayaGramAdsConfig.BANNER_AD_UNIT_ID);
+            banner.setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, widthDp));
+            banner.setAdListener(new com.google.android.gms.ads.AdListener() {
+                @Override
+                public void onAdFailedToLoad(@NonNull LoadAdError error) {
+                    Log.w(TAG, "Dialogs banner failed to load: " + error.getMessage());
+                    container.removeView(banner);
+                    container.setVisibility(View.GONE);
+                }
+            });
+            container.setVisibility(View.VISIBLE);
+            container.addView(banner, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            ));
+            banner.loadAd(new AdRequest.Builder().build());
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Could not attach dialogs banner.", error);
+            container.setVisibility(View.GONE);
+        }
     }
 
-    public String getNativeUnitId() {
-        return preferences.getString(KEY_NATIVE_AD_UNIT_ID, DEFAULT_TEST_NATIVE_ID);
-    }
-
-    /**
-     * Checks if ads are allowed in the given chat context.
-     * Policy: Absolutely NEVER allow ads in 1-on-1 private conversations or secret chats!
-     * Only permissible in broad public channels or discovery screens.
-     */
-    public boolean canShowAdInChat(boolean isPublicChannel, boolean is1on1PrivateChat) {
-        if (!isAdsActive()) {
+    @Override
+    public boolean showInterstitialIfAvailable(Context context, Runnable onImpression) {
+        if (!(context instanceof Activity) || !isMonetizationEnabled()) {
             return false;
         }
-        if (is1on1PrivateChat) {
-            return false; // Zero intrusion in personal chats
-        }
-        return isPublicChannel;
-    }
-
-    /**
-     * Build an ultra-clean, elegant native sponsored container that matches Telegram design system.
-     * When ads are disabled (current state), returns a GONE view with zero layout overhead.
-     */
-    public View createSponsoredCardView(Context context, String title, String body, String ctaText, final Runnable onCtaClick) {
-        FrameLayout container = new FrameLayout(context);
-        container.setLayoutParams(new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        ));
-
-        if (!isAdsActive()) {
-            container.setVisibility(View.GONE);
-            return container;
+        Activity activity = (Activity) context;
+        if (activity.isFinishing() || (android.os.Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) {
+            return false;
         }
 
-        container.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(6), AndroidUtilities.dp(14), AndroidUtilities.dp(6));
-
-        LinearLayout card = new LinearLayout(context);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(12), AndroidUtilities.dp(14), AndroidUtilities.dp(12));
-
-        // Elegant Card Background
-        GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
-        cardBg.setCornerRadius(AndroidUtilities.dp(14));
-        cardBg.setStroke(AndroidUtilities.dp(1), Theme.getColor(Theme.key_divider));
-        card.setBackground(cardBg);
-
-        // Header Row: "Sponsored" Tag + Title + Close Button
-        LinearLayout headerRow = new LinearLayout(context);
-        headerRow.setOrientation(LinearLayout.HORIZONTAL);
-        headerRow.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView badge = new TextView(context);
-        badge.setText("SPONSORED");
-        badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 9);
-        badge.setTextColor(Color.WHITE);
-        badge.setTypeface(AndroidUtilities.bold());
-        badge.setPadding(AndroidUtilities.dp(6), AndroidUtilities.dp(2), AndroidUtilities.dp(6), AndroidUtilities.dp(2));
-        GradientDrawable badgeBg = new GradientDrawable();
-        badgeBg.setColor(0xFF24A1DE);
-        badgeBg.setCornerRadius(AndroidUtilities.dp(4));
-        badge.setBackground(badgeBg);
-
-        TextView titleView = new TextView(context);
-        titleView.setText(title != null ? title : "Sponsored Recommendation");
-        titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-        titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-        titleView.setTypeface(AndroidUtilities.bold());
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
-        titleParams.leftMargin = AndroidUtilities.dp(8);
-        titleView.setLayoutParams(titleParams);
-
-        headerRow.addView(badge);
-        headerRow.addView(titleView);
-
-        // Body Text
-        TextView bodyView = new TextView(context);
-        bodyView.setText(body != null ? body : "");
-        bodyView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
-        bodyView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-        LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        bodyParams.topMargin = AndroidUtilities.dp(6);
-        bodyView.setLayoutParams(bodyParams);
-
-        // CTA Button
-        TextView ctaButton = new TextView(context);
-        ctaButton.setText(ctaText != null ? ctaText : "Learn More");
-        ctaButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
-        ctaButton.setTextColor(Color.WHITE);
-        ctaButton.setTypeface(AndroidUtilities.bold());
-        ctaButton.setGravity(Gravity.CENTER);
-        ctaButton.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(8), AndroidUtilities.dp(16), AndroidUtilities.dp(8));
-        GradientDrawable ctaBg = new GradientDrawable();
-        ctaBg.setColor(0xFF24A1DE);
-        ctaBg.setCornerRadius(AndroidUtilities.dp(8));
-        ctaButton.setBackground(ctaBg);
-
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnParams.topMargin = AndroidUtilities.dp(10);
-        btnParams.gravity = Gravity.END;
-        ctaButton.setLayoutParams(btnParams);
-
-        if (onCtaClick != null) {
-            ctaButton.setOnClickListener(v -> onCtaClick.run());
+        final InterstitialAd ad = interstitialAd;
+        if (ad == null) {
+            return false;
         }
+        interstitialAd = null;
+        ad.setFullScreenContentCallback(new FullScreenContentCallback() {
+            @Override
+            public void onAdImpression() {
+                if (onImpression != null) {
+                    onImpression.run();
+                }
+            }
 
-        card.addView(headerRow);
-        card.addView(bodyView);
-        card.addView(ctaButton);
+            @Override
+            public void onAdDismissedFullScreenContent() {
+                loadInterstitial();
+            }
 
-        container.addView(card);
-        return container;
+            @Override
+            public void onAdFailedToShowFullScreenContent(@NonNull AdError error) {
+                Log.w(TAG, "Interstitial could not be shown: " + error.getMessage());
+                loadInterstitial();
+            }
+        });
+
+        try {
+            ad.show(activity);
+            return true;
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Interstitial show failed.", error);
+            loadInterstitial();
+            return false;
+        }
     }
 }

@@ -535,6 +535,9 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
         titleTextView[i].setDrawablePadding(dp(4));
         titleTextView[i].setPadding(0, dp(8), 0, dp(8));
         titleTextView[i].setRightDrawableTopPadding(-dp(1));
+        if (lastRightDrawable2 != null) {
+            titleTextView[i].setRightDrawable2(lastRightDrawable2);
+        }
         if (useContainerForTitles) {
             titlesContainer.addView(titleTextView[i], 0, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP));
         } else {
@@ -553,6 +556,24 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
                 }
             }
         }
+    }
+
+    private Drawable lastRightDrawable2;
+
+    public void setTitleRightDrawable2(Drawable drawable) {
+        lastRightDrawable2 = drawable;
+        if (titleTextView != null) {
+            if (titleTextView[0] != null) {
+                titleTextView[0].setRightDrawable2(drawable);
+            }
+            if (titleTextView[1] != null) {
+                titleTextView[1].setRightDrawable2(drawable);
+            }
+        }
+    }
+
+    public Drawable getTitleRightDrawable2() {
+        return lastRightDrawable2;
     }
 
     public void setTitleRightMargin(int value) {
@@ -578,6 +599,9 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
                 ((AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable) lastRightDrawable).setParentView(titleTextView[0]);
             }
             titleTextView[0].setRightDrawableOnClick(rightDrawableOnClickListener);
+            if (lastRightDrawable2 != null) {
+                titleTextView[0].setRightDrawable2(lastRightDrawable2);
+            }
         }
         fromBottom = false;
     }
@@ -2217,6 +2241,14 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
     }
 
     public boolean doNotDrawGlassMenu;
+    private boolean drawGlassTitle = true;
+
+    public void setDrawGlassTitle(boolean draw) {
+        if (drawGlassTitle != draw) {
+            drawGlassTitle = draw;
+            invalidate();
+        }
+    }
 
     @Override
     protected void dispatchDraw(Canvas canvas) {
@@ -2232,7 +2264,7 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
         final int t = getHeight() - (getCurrentActionBarHeight() + s) / 2 - p;
         final int b = t + s + p * 2;
 
-        if (glassDrawable != null && !glassOnlyBack) {
+        if (glassDrawable != null && !glassOnlyBack && drawGlassTitle) {
             final int menuWidthWithPadding = menuWidth + ((hasForcedMenuWidth || hasForcedMenuMinWidth) ? (menuWidth > 0 ? p : 0) : (int) (p * animatorHasMenuItems.getFloatValue()));
             final int rightOffset = lerp(menuWidthWithPadding, Math.max(menuWidthWithPadding, p + s), chatAvatarContainer == null ? 0f : 1f - animatorAvatarContainerHasAvatar.getFloatValue());
 

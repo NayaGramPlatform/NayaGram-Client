@@ -82,6 +82,8 @@ import org.telegram.ui.Components.SizeNotifierFrameLayout;
 import org.telegram.ui.Components.TextViewSwitcher;
 import org.telegram.ui.Components.TransformableLoginButtonView;
 import org.telegram.ui.Components.VerticalPositionAutoAnimator;
+import org.telegram.ui.Wallet.GramWallet;
+import org.telegram.ui.Wallet.GramWalletStorage;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -92,13 +94,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class PasscodeActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate {
     public final static int TYPE_MANAGE_CODE_SETTINGS = 0,
             TYPE_SETUP_CODE = 1,
-            TYPE_ENTER_CODE_TO_MANAGE_SETTINGS = 2;
+            TYPE_ENTER_CODE_TO_MANAGE_SETTINGS = 2,
+            TYPE_ENTER_CODE_TO_GRAM_WALLET = 3;
 
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({
             TYPE_MANAGE_CODE_SETTINGS,
             TYPE_SETUP_CODE,
-            TYPE_ENTER_CODE_TO_MANAGE_SETTINGS
+            TYPE_ENTER_CODE_TO_MANAGE_SETTINGS,
+            TYPE_ENTER_CODE_TO_GRAM_WALLET
     })
     public @interface PasscodeActivityType {}
 
@@ -138,6 +142,11 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
     @Keep
     private int autoLockRow;
     private int autoLockDetailRow;
+
+    private int walletHeaderRow;
+    private int walletPasscodeRow;
+    private int walletFingerprintRow;
+    private int walletInfoRow;
 
     private int captureHeaderRow;
     private int captureRow;
@@ -308,45 +317,74 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
                         builder.setTitle(LocaleController.getString(R.string.AutoLock));
                         final NumberPicker numberPicker = new NumberPicker(getParentActivity());
                         numberPicker.setMinValue(0);
-                        numberPicker.setMaxValue(4);
-                        if (SharedConfig.autoLockIn == 0) {
-                            numberPicker.setValue(0);
-                        } else if (SharedConfig.autoLockIn == 60) {
-                            numberPicker.setValue(1);
-                        } else if (SharedConfig.autoLockIn == 60 * 5) {
-                            numberPicker.setValue(2);
-                        } else if (SharedConfig.autoLockIn == 60 * 60) {
-                            numberPicker.setValue(3);
-                        } else if (SharedConfig.autoLockIn == 60 * 60 * 5) {
-                            numberPicker.setValue(4);
-                        }
+                        numberPicker.setMaxValue(7);
+                        int current = SharedConfig.autoLockIn;
+                        if (current == 0) numberPicker.setValue(0);
+                        else if (current == 15 * 60) numberPicker.setValue(1);
+                        else if (current == 45 * 60) numberPicker.setValue(2);
+                        else if (current == 60 * 60) numberPicker.setValue(3);
+                        else if (current == 3 * 60 * 60) numberPicker.setValue(4);
+                        else if (current == 5 * 60 * 60) numberPicker.setValue(5);
+                        else if (current == 12 * 60 * 60) numberPicker.setValue(6);
+                        else numberPicker.setValue(7);
                         numberPicker.setFormatter(value -> {
-                            if (value == 0) {
-                                return LocaleController.getString(R.string.AutoLockDisabled);
-                            } else if (value == 1) {
-                                return LocaleController.formatString("AutoLockInTime", R.string.AutoLockInTime, LocaleController.formatPluralString("Minutes", 1));
-                            } else if (value == 2) {
-                                return LocaleController.formatString("AutoLockInTime", R.string.AutoLockInTime, LocaleController.formatPluralString("Minutes", 5));
-                            } else if (value == 3) {
-                                return LocaleController.formatString("AutoLockInTime", R.string.AutoLockInTime, LocaleController.formatPluralString("Hours", 1));
-                            } else if (value == 4) {
-                                return LocaleController.formatString("AutoLockInTime", R.string.AutoLockInTime, LocaleController.formatPluralString("Hours", 5));
+                            switch (value) {
+                                case 0: return LocaleController.getString(R.string.AutoLockDisabled);
+                                case 1: return "15 minutes";
+                                case 2: return "45 minutes";
+                                case 3: return "1 hour";
+                                case 4: return "3 hours";
+                                case 5: return "5 hours";
+                                case 6: return "12 hours";
+                                case 7: return "Custom…";
+                                default: return "";
                             }
-                            return "";
                         });
                         builder.setView(numberPicker);
                         builder.setNegativeButton(LocaleController.getString(R.string.Done), (dialog, which) -> {
-                            which = numberPicker.getValue();
-                            if (which == 0) {
-                                SharedConfig.autoLockIn = 0;
-                            } else if (which == 1) {
-                                SharedConfig.autoLockIn = 60;
-                            } else if (which == 2) {
-                                SharedConfig.autoLockIn = 60 * 5;
-                            } else if (which == 3) {
-                                SharedConfig.autoLockIn = 60 * 60;
-                            } else if (which == 4) {
-                                SharedConfig.autoLockIn = 60 * 60 * 5;
+                            int selected = numberPicker.getValue();
+                            if (selected == 7) {
+                                LinearLayout customLayout = new LinearLayout(getParentActivity());
+                                customLayout.setOrientation(LinearLayout.VERTICAL);
+                                customLayout.setPadding(dp(24), dp(12), dp(24), 0);
+                                TextView help = new TextView(getParentActivity());
+                                help.setText("Enter a custom auto-lock duration in minutes (1–10080).");
+                                customLayout.addView(help, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 8));
+                                android.widget.EditText minutesInput = new android.widget.EditText(getParentActivity());
+                                minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+                                minutesInput.setSingleLine(true);
+                                minutesInput.setHint("Minutes");
+                                minutesInput.setText(String.valueOf(Math.max(1, Math.min(10080, current / 60))));
+                                customLayout.addView(minutesInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+                                AlertDialog.Builder customBuilder = new AlertDialog.Builder(getParentActivity());
+                                customBuilder.setTitle(LocaleController.getString(R.string.AutoLock));
+                                customBuilder.setView(customLayout);
+                                customBuilder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
+                                customBuilder.setPositiveButton(LocaleController.getString(R.string.Done), (customDialog, customWhich) -> {
+                                    try {
+                                        int minutes = Integer.parseInt(minutesInput.getText().toString().trim());
+                                        if (minutes < 1 || minutes > 10080) {
+                                            Toast.makeText(getParentActivity(), "Choose between 1 and 10080 minutes.", Toast.LENGTH_LONG).show();
+                                            return;
+                                        }
+                                        SharedConfig.autoLockIn = minutes * 60;
+                                        listAdapter.notifyItemChanged(position);
+                                        UserConfig.getInstance(currentAccount).saveConfig(false);
+                                    } catch (NumberFormatException e) {
+                                        Toast.makeText(getParentActivity(), "Enter a valid number of minutes.", Toast.LENGTH_LONG).show();
+                                    }
+                                });
+                                showDialog(customBuilder.create());
+                                return;
+                            }
+                            switch (selected) {
+                                case 0: SharedConfig.autoLockIn = 0; break;
+                                case 1: SharedConfig.autoLockIn = 15 * 60; break;
+                                case 2: SharedConfig.autoLockIn = 45 * 60; break;
+                                case 3: SharedConfig.autoLockIn = 60 * 60; break;
+                                case 4: SharedConfig.autoLockIn = 3 * 60 * 60; break;
+                                case 5: SharedConfig.autoLockIn = 5 * 60 * 60; break;
+                                case 6: SharedConfig.autoLockIn = 12 * 60 * 60; break;
                             }
                             listAdapter.notifyItemChanged(position);
                             UserConfig.getInstance(currentAccount).saveConfig(false);
@@ -364,12 +402,25 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
                         if (!SharedConfig.allowScreenCapture) {
                             AlertsCreator.showSimpleAlert(PasscodeActivity.this, LocaleController.getString(R.string.ScreenCaptureAlert));
                         }
+                    } else if (position == walletPasscodeRow) {
+                        final GramWallet wallet = GramWallet.getInstance(currentAccount);
+                        wallet.setNeedsPasscode(!wallet.needsPasscode());
+                        UserConfig.getInstance(currentAccount).saveConfig(false);
+                        ((TextCheckCell) view).setChecked(wallet.needsPasscode());
+                    } else if (position == walletFingerprintRow) {
+                        final GramWallet wallet = GramWallet.getInstance(currentAccount);
+                        final boolean isLocked = wallet.needsFingerprint();
+                        wallet.setNeedsFingerprint(!isLocked, success -> {
+                            if (!success) return;
+                            ((TextCheckCell) view).setChecked(!isLocked);
+                        });
                     }
                 });
                 break;
             }
             case TYPE_SETUP_CODE:
-            case TYPE_ENTER_CODE_TO_MANAGE_SETTINGS: {
+            case TYPE_ENTER_CODE_TO_MANAGE_SETTINGS:
+            case TYPE_ENTER_CODE_TO_GRAM_WALLET: {
                 if (actionBar != null) {
                     actionBar.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
 
@@ -801,7 +852,12 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
     }
 
     private void updateRows() {
+        walletHeaderRow = -1;
+        walletPasscodeRow = -1;
         fingerprintRow = -1;
+        walletFingerprintRow = -1;
+        walletInfoRow = -1;
+
         rowCount = 0;
         utyanRow = rowCount++;
         hintRow = rowCount++;
@@ -820,6 +876,16 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
         }
         autoLockRow = rowCount++;
         autoLockDetailRow = rowCount++;
+
+        if (getMessagesController().config.walletAvailable.get()) {
+            walletHeaderRow = rowCount++;
+            walletPasscodeRow = rowCount++;
+            if (GramWalletStorage.deviceHasFingerprint(ApplicationLoader.applicationContext)) {
+                walletFingerprintRow = rowCount++;
+            }
+            walletInfoRow = rowCount++;
+        }
+
         captureHeaderRow = rowCount++;
         captureRow = rowCount++;
         captureDetailRow = rowCount++;
@@ -849,6 +915,8 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
         String text;
         if (type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS) {
             text = LocaleController.getString(R.string.EnterYourPasscodeInfo);
+        } else if (type == TYPE_ENTER_CODE_TO_GRAM_WALLET) {
+            text = LocaleController.getString(R.string.WalletAuthorizeTransactionPasscode);
         } else if (passcodeSetStep == 0) {
             text = LocaleController.getString(currentPasswordType == SharedConfig.PASSCODE_TYPE_PIN ? R.string.CreatePasscodeInfoPIN : R.string.CreatePasscodeInfoPassword);
         } else text = descriptionTextSwitcher.getCurrentView().getText().toString();
@@ -856,6 +924,8 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
         boolean animate = !(descriptionTextSwitcher.getCurrentView().getText().equals(text) || TextUtils.isEmpty(descriptionTextSwitcher.getCurrentView().getText()));
         if (type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS) {
             descriptionTextSwitcher.setText(LocaleController.getString(R.string.EnterYourPasscodeInfo), animate);
+        } else if (type == TYPE_ENTER_CODE_TO_GRAM_WALLET) {
+            descriptionTextSwitcher.setText(LocaleController.getString(R.string.WalletAuthorizeTransactionPasscode));
         } else if (passcodeSetStep == 0) {
             descriptionTextSwitcher.setText(LocaleController.getString(currentPasswordType == SharedConfig.PASSCODE_TYPE_PIN ? R.string.CreatePasscodeInfoPIN : R.string.CreatePasscodeInfoPassword), animate);
         }
@@ -910,12 +980,12 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
 
     private boolean isPinCode() {
         return type == TYPE_SETUP_CODE && currentPasswordType == SharedConfig.PASSCODE_TYPE_PIN ||
-                type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS && SharedConfig.passcodeType == SharedConfig.PASSCODE_TYPE_PIN;
+                (type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS || type == TYPE_ENTER_CODE_TO_GRAM_WALLET) && SharedConfig.passcodeType == SharedConfig.PASSCODE_TYPE_PIN;
     }
 
     private boolean isPassword() {
         return type == TYPE_SETUP_CODE && currentPasswordType == SharedConfig.PASSCODE_TYPE_PASSWORD ||
-                type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS && SharedConfig.passcodeType == SharedConfig.PASSCODE_TYPE_PASSWORD;
+                (type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS || type == TYPE_ENTER_CODE_TO_GRAM_WALLET) && SharedConfig.passcodeType == SharedConfig.PASSCODE_TYPE_PASSWORD;
     }
 
     private void processDone() {
@@ -982,7 +1052,7 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
                 }
                 NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.didSetPasscode);
             });
-        } else if (type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS) {
+        } else if (type == TYPE_ENTER_CODE_TO_MANAGE_SETTINGS || type == TYPE_ENTER_CODE_TO_GRAM_WALLET) {
             if (SharedConfig.passcodeRetryInMs > 0) {
                 int value = Math.max(1, (int) Math.ceil(SharedConfig.passcodeRetryInMs / 1000.0));
                 Toast.makeText(getParentActivity(), LocaleController.formatString("TooManyTries", R.string.TooManyTries, LocaleController.formatPluralString("Seconds", value)), Toast.LENGTH_SHORT).show();
@@ -1020,19 +1090,35 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
             }
             keyboardView.setEditText(null);
 
-            animateSuccessAnimation(() -> {
-                presentFragment(new PasscodeActivity(TYPE_MANAGE_CODE_SETTINGS), true);
-                if (openedSettings != null) {
-                    AndroidUtilities.runOnUIThread(openedSettings);
-                    openedSettings = null;
-                }
-            });
+            if (type == TYPE_ENTER_CODE_TO_GRAM_WALLET) {
+                animateSuccessAnimation(() -> {
+                    if (enteredCode != null) {
+                        AndroidUtilities.runOnUIThread(enteredCode);
+                        enteredCode = null;
+                    }
+                    finishFragment();
+                });
+            } else {
+                animateSuccessAnimation(() -> {
+                    presentFragment(new PasscodeActivity(TYPE_MANAGE_CODE_SETTINGS), true);
+                    if (openedSettings != null) {
+                        AndroidUtilities.runOnUIThread(openedSettings);
+                        openedSettings = null;
+                    }
+                });
+            }
         }
     }
 
     private Runnable openedSettings;
     public void setOnOpenedSettings(Runnable openedSettings) {
         this.openedSettings = openedSettings;
+    }
+
+    private Runnable enteredCode;
+    public PasscodeActivity setOnEnteredCode(Runnable enteredCode) {
+        this.enteredCode = enteredCode;
+        return this;
     }
 
     private void onPasscodeError() {
@@ -1075,7 +1161,7 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
         public boolean isEnabled(RecyclerView.ViewHolder holder) {
             int position = holder.getAdapterPosition();
             return position == fingerprintRow || position == autoLockRow || position == captureRow ||
-                    position == changePasscodeRow || position == disablePasscodeRow;
+                    position == changePasscodeRow || position == disablePasscodeRow || position == walletPasscodeRow || position == walletFingerprintRow;
         }
 
         @Override
@@ -1118,6 +1204,10 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
                         textCell.setTextAndCheck(LocaleController.getString(R.string.UnlockFingerprint), SharedConfig.useFingerprintLock, false);
                     } else if (position == captureRow) {
                         textCell.setTextAndCheck(LocaleController.getString(R.string.ScreenCaptureShowContent), SharedConfig.allowScreenCapture, false);
+                    } else if (position == walletFingerprintRow) {
+                        textCell.setTextAndCheck(LocaleController.getString(R.string.WalletConfirmWithFingerprint), GramWallet.getInstance(currentAccount).canSend() && GramWallet.getInstance(currentAccount).needsFingerprint(), false);
+                    } else if (position == walletPasscodeRow) {
+                        textCell.setTextAndCheck(LocaleController.getString(R.string.WalletConfirmWithPasscode), GramWallet.getInstance(currentAccount).needsPasscode(), false);
                     }
                     break;
                 }
@@ -1158,6 +1248,8 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
                     cell.setHeight(46);
                     if (position == captureHeaderRow) {
                         cell.setText(LocaleController.getString(R.string.ScreenCaptureHeader));
+                    } else if (position == walletHeaderRow) {
+                        cell.setText(LocaleController.getString(R.string.WalletLock));
                     }
                     break;
                 }
@@ -1176,6 +1268,9 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
                     } else if (position == autoLockDetailRow) {
                         cell.setText(LocaleController.getString(R.string.AutoLockInfo));
                         cell.getTextView().setGravity(LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT);
+                    } else if (position == walletInfoRow) {
+                        cell.setText(LocaleController.getString(R.string.WalletLockInfo));
+                        cell.getTextView().setGravity(LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT);
                     } else if (position == captureDetailRow) {
                         cell.setText(LocaleController.getString(R.string.ScreenCaptureInfo));
                         cell.getTextView().setGravity(LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT);
@@ -1187,13 +1282,13 @@ public class PasscodeActivity extends BaseFragment implements NotificationCenter
 
         @Override
         public int getItemViewType(int position) {
-            if (position == fingerprintRow || position == captureRow) {
+            if (position == fingerprintRow || position == captureRow || position == walletFingerprintRow || position == walletPasscodeRow) {
                 return VIEW_TYPE_CHECK;
             } else if (position == changePasscodeRow || position == autoLockRow || position == disablePasscodeRow) {
                 return VIEW_TYPE_SETTING;
-            } else if (position == autoLockDetailRow || position == captureDetailRow || position == hintRow) {
+            } else if (position == autoLockDetailRow || position == captureDetailRow || position == hintRow || position == walletInfoRow) {
                 return VIEW_TYPE_INFO;
-            } else if (position == captureHeaderRow) {
+            } else if (position == captureHeaderRow || position == walletHeaderRow) {
                 return VIEW_TYPE_HEADER;
             } else if (position == utyanRow) {
                 return VIEW_TYPE_UTYAN;

@@ -12,10 +12,6 @@ gradlePlugin {
             id = "org.telegram.build-app-plugin"
             implementationClass = "org.telegram.plugin.TelegramBuildAppPlugin"
         }
-        register("lottieMetaPlugin") {
-            id = "org.telegram.lottie-meta"
-            implementationClass = "org.telegram.lottie.LottieMetaPlugin"
-        }
         register("testGenerator") {
             id = "test-generator"
             implementationClass = "com.example.TestGeneratorPlugin"
@@ -24,10 +20,11 @@ gradlePlugin {
 }
 
 repositories {
-    maven { url = uri("https://maven.aliyun.com/repository/public") }
+    // Prefer canonical repositories; use the Aliyun mirror only as a fallback.
     google()
-    gradlePluginPortal()
     mavenCentral()
+    gradlePluginPortal()
+    maven { url = uri("https://maven.aliyun.com/repository/public") }
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
@@ -41,6 +38,7 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 dependencies {
     implementation(gradleApi())
     implementation("com.android.tools.build:gradle:8.13.2")
+
     implementation("com.squareup.moshi:moshi:1.15.0")
     implementation("com.squareup.moshi:moshi-kotlin:1.15.0")
     implementation("com.github.javaparser:javaparser-core:3.25.4")

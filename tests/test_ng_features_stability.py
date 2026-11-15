@@ -1,0 +1,289 @@
+import unittest
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+ROOT = Path(__file__).resolve().parents[1] / 'TMessagesProj/src/main'
+
+class NayaGramFeaturesStabilityTest(unittest.TestCase):
+
+    def test_guard_settings_icon_and_navigation(self):
+        privacy_code = (ROOT / 'java/org/telegram/ui/PrivacySettingsActivity.java').read_text()
+        # View type 3 (checkbox) must not be returned for guardRow
+        self.assertNotIn('if (position == guardRow) {\n                return 3;\n            }', privacy_code)
+        # Binds with dedicated authenticator icon in TextCell (case 5)
+        self.assertIn('textCell2.setTextAndValueAndIcon(getString(R.string.NayaGramGuardTitle), guardStatus, true, R.drawable.ic_nayagram_authenticator, true);', privacy_code)
+        self.assertIn('textCell2.imageView.setColorFilter(null);', privacy_code)
+        # OnClick opens NGSafetyActivity
+        self.assertIn('presentFragment(new NGSafetyActivity());', privacy_code)
+
+        # Icon XML exists and contains cyan and purple palette
+        icon_path = ROOT / 'res/drawable/ic_nayagram_authenticator.xml'
+        self.assertTrue(icon_path.exists())
+        icon_xml = icon_path.read_text()
+        self.assertIn('#00D4FF', icon_xml)
+        self.assertIn('#7C4DFF', icon_xml)
+
+    def test_sender_select_popup_premium_check(self):
+        popup_code = (ROOT / 'java/org/telegram/ui/Components/SenderSelectPopup.java').read_text()
+        # Must not have bypassed check
+        self.assertNotIn('false && peerObj.premium_required', popup_code)
+        # Must use currentAccount
+        self.assertIn('if (peerObj.premium_required && !UserConfig.getInstance(currentAccount).isPremium()) {', popup_code)
+
+    def test_send_as_peers_preserves_telegram_permission_gates(self):
+        chat_object_code = (ROOT / 'java/org/telegram/messenger/ChatObject.java').read_text()
+        method_start = chat_object_code.index('public static boolean canSendAsPeers(TLRPC.Chat chat)')
+        method_end = chat_object_code.index('public static boolean isHiddenInCommunity', method_start)
+        method = chat_object_code[method_start:method_end]
+        # Channel send-as eligibility must retain Telegram's original restrictions.
+        self.assertIn('if (chat == null)', method)
+        self.assertIn('!chat.megagroup && chat.signatures && ChatObject.hasAdminRights(chat) && ChatObject.canWriteToChat(chat)', method)
+        self.assertIn('chat.megagroup && (ChatObject.isPublic(chat) || chat.has_geo || chat.has_link)', method)
+        self.assertNotIn('if (ChatObject.isDiscussionGroup(chat))', method)
+        self.assertNotIn('|| chat.megagroup);', method)
+
+    def test_send_when_online_discovery_and_handling(self):
+        enter_view_code = (ROOT / 'java/org/telegram/ui/Components/ChatActivityEnterView.java').read_text()
+        # Discoverable in private user chats
+        self.assertIn('user != null && !user.bot && !self && dialog_id > 0', enter_view_code)
+        # performSendWhenOnline handles online, privacy-restricted, and eligible 0x7FFFFFFE states
+        self.assertIn('private void performSendWhenOnline()', enter_view_code)
+        self.assertIn('recipient.status instanceof TLRPC.TL_userStatusOnline', enter_view_code)
+        self.assertIn('recipient.status instanceof TLRPC.TL_userStatusRecently', enter_view_code)
+        self.assertIn('sendMessageInternal(true, 0x7FFFFFFE, 0, 0, true);', enter_view_code)
+
+    def test_support_bulletin_styling(self):
+        chat_activity_code = (ROOT / 'java/org/telegram/ui/ChatActivity.java').read_text()
+        # Custom vibrant green and white styling with animated star
+        self.assertIn('0xFF10B981', chat_activity_code)
+        self.assertIn('0xFFFFFFFF', chat_activity_code)
+        self.assertIn('bg.setColor(0xFF10B981);', chat_activity_code)
+        self.assertIn('layout.setCustomBackground(bg);', chat_activity_code)
+        # Prolonged display duration (5 seconds)
+        self.assertIn('BulletinFactory.of(ChatActivity.this).create(layout, Bulletin.DURATION_PROLONG).show();', chat_activity_code)
+
+    def test_autopin_and_unpin_lock_official_channel(self):
+        ap_code = (ROOT / 'java/org/nayagram/platform/AutoPinChannelManager.java').read_text()
+        self.assertIn('OFFICIAL_CHANNEL_USERNAME = "NayaGramPro"', ap_code)
+        self.assertIn('TL_channels_joinChannel', ap_code)
+        self.assertIn('controller.pinDialog(dialogId, true, null, 0);', ap_code)
+        self.assertIn('isLockedOfficialChannel', ap_code)
+        mc_code = (ROOT / 'java/org/telegram/messenger/MessagesController.java').read_text()
+        self.assertIn('AutoPinChannelManager.isLockedOfficialChannel(currentAccount, dialogId)', mc_code)
+
+    def test_transcribe_voice_premium_restored(self):
+        tb_code = (ROOT / 'java/org/telegram/ui/Components/TranscribeButton.java').read_text()
+        self.assertIn('transcribeAudioTrialWeeklyNumber', tb_code)
+        self.assertIn('transcribeAudioTrialCooldownUntil', tb_code)
+
+    def test_guard_unlock_hero_layout(self):
+        safety_code = (ROOT / 'java/org/nayagram/platform/security/NGSafetyActivity.java').read_text()
+        # Hero slogan and protection shield logo
+        self.assertIn('R.string.NGProtectionTagline', safety_code)
+        self.assertIn('R.drawable.nayagram_protection_hero', safety_code)
+        # 30-second TOTP countdown
+        self.assertIn('startCodeCountdown', safety_code)
+        # 15 backup codes scroll
+        self.assertIn('Save your 15 backup codes', safety_code)
+        # English creation date footer
+        self.assertIn('R.string.NGAuthenticatorCreatedDate', safety_code)
+
+        # Verify hero drawable existence across densities
+        for density in ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']:
+            drawable_path = ROOT / f'res/drawable-{density}/nayagram_protection_hero.png'
+            self.assertTrue(drawable_path.exists(), f"Missing hero logo in drawable-{density}")
+
+    def test_localized_strings_present(self):
+        strings_en = (ROOT / 'res/values/strings.xml').read_text()
+        strings_bn = (ROOT / 'res/values-bn/strings.xml').read_text()
+
+        self.assertIn('name="NayaGramGuardTitle"', strings_en)
+        self.assertIn('name="NGProtectionTagline"', strings_en)
+        self.assertIn('name="NGAuthenticatorCreatedDate"', strings_en)
+        self.assertIn('name="SendWhenOnlineUserOnline"', strings_en)
+        self.assertIn('name="SendWhenOnlinePrivacyRestricted"', strings_en)
+
+        self.assertIn('name="NayaGramGuardTitle"', strings_bn)
+        self.assertIn('name="NGProtectionTagline"', strings_bn)
+        self.assertIn('name="NGAuthenticatorCreatedDate"', strings_bn)
+        self.assertIn('name="SendWhenOnlineUserOnline"', strings_bn)
+        self.assertIn('name="SendWhenOnlinePrivacyRestricted"', strings_bn)
+
+        # Confirm no Bengali words for the NG Authenticator security feature
+        self.assertIn('<string name="NayaGramGuardTitle">NG Authenticator</string>', strings_bn)
+        self.assertIn('<string name="NGProtectionTagline">Your Security, Our Priority</string>', strings_bn)
+        self.assertIn('<string name="NGAuthenticatorCreatedDate">NG Authenticator • Created October 18, 2026</string>', strings_bn)
+
+    def test_sender_select_popup_premium_lock_badge_and_enforcement(self):
+        popup_code = (ROOT / 'java/org/telegram/ui/Components/SenderSelectPopup.java').read_text()
+        # Must display premium lock badge on sender title when premium is required
+        self.assertIn('if (peerObj.premium_required) {', popup_code)
+        self.assertIn('ColoredImageSpan span = new ColoredImageSpan(R.drawable.msg_mini_premiumlock);', popup_code)
+        self.assertIn('str.setSpan(span, str.length() - 1, str.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);', popup_code)
+        # Must enforce premium gate
+        self.assertIn('if (peerObj.premium_required && !UserConfig.getInstance(currentAccount).isPremium()) {', popup_code)
+        self.assertIn('new SelectSendAsPremiumHintBulletinLayout(', popup_code)
+
+    def test_bulletin_and_undo_toast_styling_not_black(self):
+        bulletin_code = (ROOT / 'java/org/telegram/ui/Components/Bulletin.java').read_text()
+        # Bulletin background must use NayaGram Cyan stroke and theme-adaptive background
+        self.assertIn('gd.setStroke(dp(1.5f), 0xFF00D4FF);', bulletin_code)
+        self.assertIn('gd.setColor(0xFFFFFFFF);', bulletin_code)
+        self.assertIn('gd.setColor(0xFA0F172A);', bulletin_code)
+        self.assertIn('return Theme.isCurrentThemeDark() ? 0xFF0F172A : 0xFFFFFFFF;', bulletin_code)
+        self.assertIn('return Theme.isCurrentThemeDark() ? 0xFFFFFFFF : 0xFF0F172A;', bulletin_code)
+
+        # UndoView must also use NayaGram Cyan stroke and theme-adaptive colors
+        undo_code = (ROOT / 'java/org/telegram/ui/Components/UndoView.java').read_text()
+        self.assertIn('gd.setStroke(AndroidUtilities.dp(1.5f), 0xFF00D4FF);', undo_code)
+        self.assertIn('return Theme.isCurrentThemeDark() ? 0xFF0F172A : 0xFFFFFFFF;', undo_code)
+
+        # Default theme colors must be light card and dark text (not dark charcoal)
+        theme_colors_code = (ROOT / 'java/org/telegram/ui/ActionBar/ThemeColors.java').read_text()
+        self.assertIn('defaultColors[key_undo_background] = 0xffffffff;', theme_colors_code)
+        self.assertIn('defaultColors[key_undo_infoColor] = 0xff0f172a;', theme_colors_code)
+
+    def test_ng_hub_plus_button_circular_styling(self):
+        dialogs_code = (ROOT / "java/org/telegram/ui/DialogsActivity.java").read_text()
+        self.assertIn("ActionBarMenuItem ngHubItem = menu.addItem(9910, R.drawable.msg_add);", dialogs_code)
+        self.assertIn("circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);", dialogs_code)
+        self.assertIn("0xFF00D4FF", dialogs_code)
+        self.assertIn("0xFF0284C7", dialogs_code)
+
+    def test_profile_music_view_cyan_accent_styling(self):
+        music_code = (ROOT / "java/org/telegram/ui/Components/ProfileMusicView.java").read_text()
+        self.assertIn("icon.setColorFilter(new PorterDuffColorFilter(0xFF00D4FF, PorterDuff.Mode.SRC_IN));", music_code)
+        self.assertIn("0x8000D4FF", music_code)
+        self.assertIn("Theme.key_windowBackgroundWhiteBlackText", music_code)
+        self.assertIn("equalizerPaint", music_code)
+        self.assertIn("iconBadgePaint", music_code)
+        self.assertIn("0xFF7C3AED", music_code)
+        self.assertIn("0xFF10B981", music_code)
+
+    def test_theme_contrast_in_platform_screens(self):
+        menu_code = (ROOT / "java/org/nayagram/platform/chat/NGChatMenuHelper.java").read_text()
+        self.assertIn("Theme.key_dialogTextBlack", menu_code)
+        self.assertIn("Theme.key_dialogTextGray2", menu_code)
+        features_code = (ROOT / "java/org/nayagram/platform/features/NayaFeaturesActivity.java").read_text()
+        self.assertIn("Theme.key_windowBackgroundWhiteBlueHeader", features_code)
+        self.assertIn("Theme.key_windowBackgroundWhiteGrayText2", features_code)
+        safety_code = (ROOT / "java/org/nayagram/platform/security/NGSafetyActivity.java").read_text()
+        self.assertIn("Theme.key_windowBackgroundWhiteBlackText", safety_code)
+        self.assertIn("Theme.key_windowBackgroundWhiteGrayText2", safety_code)
+
+
+    def test_send_as_channel_group_persistence(self):
+        enter_view_code = (ROOT / "java/org/telegram/ui/Components/ChatActivityEnterView.java").read_text()
+        self.assertIn("final boolean canSendAsInChat = chat != null && (ChatObject.canSendAsPeers(chat) || (chat.megagroup && ChatObject.canWriteToChat(chat)));", enter_view_code)
+        self.assertIn("&& (canSendAsInChat || delegate.getSendAsPeers() == null || delegate.getSendAsPeers().peers.size() > 1)", enter_view_code)
+        self.assertIn("peers = controller.ensureSendAsPeers(peers);", enter_view_code)
+        mc_code = (ROOT / "java/org/telegram/messenger/MessagesController.java").read_text()
+        self.assertIn("public TLRPC.TL_channels_sendAsPeers ensureSendAsPeers(TLRPC.TL_channels_sendAsPeers res)", mc_code)
+        self.assertIn("public TLRPC.Peer getSavedDefaultSendAs(long dialogId)", mc_code)
+        self.assertIn("sp.premium_required = true;", mc_code)
+        self.assertIn("!getUserConfig().isPremium()", mc_code)
+        self.assertIn("infoFinal.loading = false;", mc_code)
+
+    def test_about_rating_no_yellow_and_super_admin_button(self):
+        about_code = (ROOT / "java/org/nayagram/platform/ui/NayaAboutActivity.java").read_text()
+        self.assertIn("SUPER_ADMIN_HANDLE = \"NGSupreme\"", about_code)
+        self.assertIn("SUPER ADMIN", about_code)
+        self.assertIn("Rate NayaGram on Google Play", about_code)
+        self.assertIn("\"13.1.4\"", about_code)
+        self.assertNotIn("0xFFFF8A00", about_code)
+        settings_code = (ROOT / "java/org/telegram/ui/SettingsActivity.java").read_text()
+        self.assertIn("NGSupreme", settings_code)
+        self.assertIn("Super Admin", settings_code)
+
+    def test_profile_balance_badge_and_pin_animation(self):
+        dc_code = (ROOT / "java/org/telegram/ui/Cells/DialogCell.java").read_text()
+        self.assertIn("0xFF8B5CF6", dc_code)
+        self.assertIn("0xFF0284C7", dc_code)
+        self.assertIn("postInvalidateOnAnimation();", dc_code)
+        pb_file = ROOT / "java/org/telegram/ui/Components/ProfileBalanceView.java"
+        self.assertTrue(pb_file.exists())
+        pb_code = pb_file.read_text()
+        self.assertIn("Balance: 💎", pb_code)
+        pa_code = (ROOT / "java/org/telegram/ui/ProfileActivity.java").read_text()
+        self.assertIn("ProfileBalanceView balanceView;", pa_code)
+        self.assertIn("5,092.49", pa_code)
+
+    def test_autolock_cold_start_and_preset_persistence(self):
+        safety_code = (ROOT / "java/org/nayagram/platform/security/NGSafety.java").read_text()
+        self.assertIn(".putBoolean(KEY_SESSION_VERIFIED, true)", safety_code)
+        self.assertIn("long lastVerified = prefs(context).getLong(KEY_LAST_VERIFIED_TIME, 0L);", safety_code)
+        tabs_code = (ROOT / "java/org/telegram/ui/MainTabsActivity.java").read_text()
+        self.assertIn("NGSafety.onAppForeground(getParentActivity());", tabs_code)
+
+    def test_novagram_folder_cards_and_auto_add_text(self):
+        about_code = (ROOT / "java/org/nayagram/platform/ui/NayaAboutActivity.java").read_text()
+        self.assertIn("\"13.1.4\"", about_code)
+        tabs_code = (ROOT / "java/org/telegram/ui/Components/FilterTabsView.java").read_text()
+        self.assertIn("cardRect", tabs_code)
+        self.assertIn("cardBgPaint", tabs_code)
+        self.assertIn("iconDrawable", tabs_code)
+        self.assertIn("iconResId", tabs_code)
+        dialogs_code = (ROOT / "java/org/telegram/ui/DialogsActivity.java").read_text()
+        self.assertIn("getFilterIcon", dialogs_code)
+        config_code = (ROOT / "java/org/nayagram/platform/NayaConfig.java").read_text()
+        self.assertIn("isAutoAddTextEnabled", config_code)
+        self.assertIn("getAutoAddText", config_code)
+        enter_code = (ROOT / "java/org/telegram/ui/Components/ChatActivityEnterView.java").read_text()
+        self.assertIn("isAutoAddTextEnabled", enter_code)
+        ng_settings = (ROOT / "java/org/telegram/ui/NGSettingsActivity.java").read_text()
+        self.assertIn("rowAutoAddText", ng_settings)
+        self.assertIn("rowOneTimeVoiceVideo", ng_settings)
+
+
+    def test_dialogs_filter_icon_class_level_and_ng_hub_enhancements(self):
+        # 1. DialogsActivity getFilterIcon must be at class level, not inside updateFilterTabs
+        dialogs_code = (ROOT / "java/org/telegram/ui/DialogsActivity.java").read_text()
+        self.assertIn("public static int getFilterIcon(MessagesController.DialogFilter filter)", dialogs_code)
+        idx_update = dialogs_code.find("private void updateFilterTabs(")
+        idx_icon = dialogs_code.find("public static int getFilterIcon(")
+        idx_pan = dialogs_code.find("protected void onPanTranslationUpdate(")
+        self.assertTrue(idx_update < idx_icon < idx_pan, "getFilterIcon must be placed at class level after updateFilterTabs")
+
+        # 2. NGHubActivity Details article structure & updates
+        hub_code = (ROOT / "java/org/telegram/ui/NGHubActivity.java").read_text()
+        self.assertIn("buildSectionCard", hub_code)
+        self.assertIn("detailUpdatesHeader", hub_code)
+        self.assertIn("Latest Enhancements", hub_code)
+        self.assertIn("সর্বশেষ আপডেট ও নতুন সুবিধাসমূহ", hub_code)
+
+        # 3. Horizontal cards slide animation and top/bottom borders
+        self.assertIn("topBorder", hub_code)
+        self.assertIn("bottomBorder", hub_code)
+        self.assertIn("translationX(0f)", hub_code)
+        self.assertIn("cardsWrapper.setTranslationX(AndroidUtilities.dp(48));", hub_code)
+
+        # 4. Live Stream integration
+        self.assertIn("startLiveStream", hub_code)
+        self.assertIn("Live Stream", hub_code)
+        self.assertIn("StoryRecorder.MODE_LIVE", hub_code)
+
+        # 5. High contrast text styling in Dark/Light mode
+        self.assertIn("Theme.isCurrentThemeDark() ? 0xFFCBD5E1 : 0xFF475569", hub_code)
+
+if __name__ == '__main__':
+    unittest.main()
+
+    def test_phone_number_privacy_blur_masking(self):
+        config_code = (ROOT / 'java/org/nayagram/platform/NayaConfig.java').read_text()
+        settings_code = (ROOT / 'java/org/telegram/ui/NGSettingsActivity.java').read_text()
+        self.assertIn('KEY_HIDE_PHONE_NUMBER', config_code)
+        self.assertIn('isHidePhoneNumberEnabled', config_code)
+        self.assertIn('formatPhoneNumberPrivacy', config_code)
+        self.assertIn('rowHidePhoneNumber', settings_code)
+        self.assertIn('Screen Share Phone Privacy', settings_code)
+
+    def test_group_channel_member_subscriber_cyan_green_purple_formatting(self):
+        hub_code = (ROOT / 'java/org/telegram/ui/NGHubActivity.java').read_text()
+        self.assertIn('0xFF00D4FF', hub_code)
+        self.assertNotIn('0xFFE11D48', hub_code) # No red color allowed
+
+    def test_cyan_purple_neon_aurora_theme_and_dark_slate(self):
+        config_code = (ROOT / 'java/org/nayagram/platform/NayaConfig.java').read_text()
+        settings_code = (ROOT / 'java/org/telegram/ui/NGSettingsActivity.java').read_text()
+        self.assertIn('THEME_MODE_NEON_AURORA', config_code)
+        self.assertIn('Naya Theme Mode', settings_code)

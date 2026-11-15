@@ -53,9 +53,9 @@ import kotlinx.coroutines.GlobalScope;
 import kotlinx.coroutines.Job;
 import kotlinx.coroutines.JobCancellationException;
 
-@RequiresApi(api = 28)
 public class PasskeysController {
 
+    @RequiresApi(api = 28)
     public static void create(Context context, int currentAccount, Utilities.Callback2<TL_account.Passkey, String> done) {
         if (!BuildVars.SUPPORTS_PASSKEYS) return;
 
@@ -162,6 +162,7 @@ public class PasskeysController {
         );
     }
 
+    @RequiresApi(api = 28)
     public static Runnable login(Context context, int currentAccount, boolean clickedButton, Utilities.Callback3<Long, TLRPC.auth_Authorization, String> done) {
         if (!BuildVars.SUPPORTS_PASSKEYS) return null;
 
@@ -226,8 +227,19 @@ public class PasskeysController {
                             passkeyResponse.signature = Base64.decode(response.getString("signature"), Base64.URL_SAFE);
                             passkeyResponse.user_handle = new String(Base64.decode(response.getString("userHandle"), Base64.URL_SAFE));
 
-                            datacenterId = Integer.parseInt(passkeyResponse.user_handle.split(":")[0]);
-                            userId = Long.parseLong(passkeyResponse.user_handle.split(":")[1]);
+                            final String userHandle = passkeyResponse.user_handle;
+                            if (userHandle == null) {
+                                throw new IllegalArgumentException("Missing passkey user handle");
+                            }
+                            final String[] userHandleParts = userHandle.split(":", -1);
+                            if (userHandleParts.length != 2 || userHandleParts[0].isEmpty() || userHandleParts[1].isEmpty()) {
+                                throw new IllegalArgumentException("Invalid passkey user handle");
+                            }
+                            datacenterId = Integer.parseInt(userHandleParts[0]);
+                            userId = Long.parseLong(userHandleParts[1]);
+                            if (datacenterId <= 0 || userId <= 0) {
+                                throw new IllegalArgumentException("Invalid passkey account reference");
+                            }
 
                             req2.credential.response = passkeyResponse;
 

@@ -101,8 +101,10 @@ import org.telegram.ui.PhotoViewer;
 import org.telegram.ui.Stars.StarsController;
 import org.telegram.ui.Stars.StarsIntroActivity;
 import org.telegram.ui.Stories.StoriesController;
+import org.telegram.ui.Wallet.GramWallet;
 import org.telegram.ui.community.CommunityUtils;
 import org.telegram.ui.web.BotWebViewContainer;
+import org.telegram.utils.code.highlight.CodeHighlighting;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -223,6 +225,7 @@ public class MessageObject {
     public int dateKeyInt;
     public String monthKey;
     public boolean deleted;
+    public boolean isAntiDeleted;
     public boolean deletedByThanos;
     public float audioProgress;
     public float forceSeekTo = -1;
@@ -1866,6 +1869,7 @@ public class MessageObject {
         localUserName = userName;
         messageText = formattedMessage;
         messageOwner = message;
+        isAntiDeleted = messageOwner != null && messageOwner.isAntiDeleted;
         localChannel = isChannel;
         localSupergroup = supergroup;
         localEdit = edit;
@@ -1921,6 +1925,7 @@ public class MessageObject {
 
         currentAccount = accountNum;
         messageOwner = message;
+        isAntiDeleted = messageOwner != null && messageOwner.isAntiDeleted;
         replyMessageObject = replyToMessage;
         eventId = eid;
         wasUnread = !messageOwner.out && messageOwner.unread;
@@ -1977,11 +1982,12 @@ public class MessageObject {
         }
     }
 
-    protected void checkBigAnimatedEmoji() {
+    public void checkBigAnimatedEmoji() {
         emojiAnimatedSticker = null;
         emojiAnimatedStickerId = null;
         if (emojiOnlyCount == 1 && !(getMedia(messageOwner) instanceof TLRPC.TL_messageMediaWebPage) && !(getMedia(messageOwner) instanceof TLRPC.TL_messageMediaInvoice) && (getMedia(messageOwner) instanceof TLRPC.TL_messageMediaEmpty || getMedia(messageOwner) == null) && this.messageOwner.grouped_id == 0) {
-            if (messageOwner.entities.isEmpty()) {
+            boolean hasCustomEmoji = !messageOwner.entities.isEmpty() && messageOwner.entities.get(0) instanceof TLRPC.TL_messageEntityCustomEmoji;
+            if (messageOwner.entities.isEmpty() || !hasCustomEmoji) {
                 CharSequence emoji = messageText;
                 int index;
                 if ((index = TextUtils.indexOf(emoji, "\uD83C\uDFFB")) >= 0) {
@@ -2023,6 +2029,9 @@ public class MessageObject {
             }
         }
         if (emojiAnimatedSticker == null && emojiAnimatedStickerId == null) {
+            if (emojiOnlyCount == 1) {
+                type = TYPE_EMOJIS;
+            }
             generateLayout(null);
         } else if (isSticker()) {
             type = TYPE_STICKER;
@@ -4952,6 +4961,24 @@ public class MessageObject {
                     } else {
                         messageText = formatString(isChannel ? R.string.BoostingGiveawayJustStarted : R.string.BoostingGiveawayJustStartedGroup, chat != null ? chat.title : "");
                     }
+                } else if (messageOwner.action instanceof TLRPC.TL_messageActionWalletTonConnectRequest) {
+                    final TLRPC.TL_messageActionWalletTonConnectRequest request = (TLRPC.TL_messageActionWalletTonConnectRequest) messageOwner.action;
+                    if (!TextUtils.isEmpty(request.dapp_name)) {
+                        messageText = formatString(
+                              request.declined ? R.string.WalletTonConnectRequestAppDeclined
+                            : request.accepted ? R.string.WalletTonConnectRequestAppProcessed
+                            : request.expires <= ConnectionsManager.getInstance(currentAccount).getCurrentTime()
+                            ? R.string.WalletTonConnectRequestAppExpired : R.string.WalletTonConnectRequestAppPending,
+                            request.dapp_name
+                        );
+                    } else {
+                        messageText = getString(
+                              request.declined ? R.string.WalletTonConnectRequestDeclined
+                            : request.accepted ? R.string.WalletTonConnectRequestProcessed
+                            : request.expires <= ConnectionsManager.getInstance(currentAccount).getCurrentTime()
+                            ? R.string.WalletTonConnectRequestExpired : R.string.WalletTonConnectRequestPending
+                        );
+                    }
                 } else if (messageOwner.action instanceof TLRPC.TL_messageActionBoostApply) {
                     TLRPC.Chat chat = messageOwner.peer_id != null && messageOwner.peer_id.channel_id != 0 ? getChat(chats, sChats, messageOwner.peer_id.channel_id) : null;
                     boolean isChannel = ChatObject.isChannelAndNotMegaGroup(chat);
@@ -5921,6 +5948,23 @@ public class MessageObject {
                     } else {
                         messageText = isOut() ? getString(R.string.SharingOfferEnableHeaderShortYou) : replaceTags(formatString(R.string.SharingOfferEnableHeaderShortOther, userName));
                     }
+                } else if (messageOwner.action instanceof TLRPC.TL_messageActionGramTransfer) {
+                    final TLRPC.TL_messageActionGramTransfer action = (TLRPC.TL_messageActionGramTransfer) messageOwner.action;
+                    final TLRPC.User user = getUser(users, sUsers, DialogObject.getPeerDialogId(messageOwner.peer_id));
+                    if (isOut()) {
+                        messageText = replaceWithLink(AndroidUtilities.replaceTags(LocaleController.formatString(R.string.WalletActionSentGrams, GramWallet.formatGramsWithUnit(action.amount))), "un1", user);
+                    } else if (UserObject.isService(DialogObject.getPeerDialogId(messageOwner.peer_id))) {
+                        messageText = AndroidUtilities.replaceTags(LocaleController.formatString(R.string.WalletActionReceivedGramsSomeone, GramWallet.formatGramsWithUnit(action.amount)));
+                    } else {
+                        messageText = replaceWithLink(AndroidUtilities.replaceTags(LocaleController.formatString(R.string.WalletActionReceivedGrams, GramWallet.formatGramsWithUnit(action.amount))), "un1", fromObject);
+                    }
+                    if (isOut()) {
+                        messageTextShort = AndroidUtilities.replaceTags(LocaleController.formatString(R.string.WalletActionSentGramsShort, GramWallet.formatGramsWithUnit(action.amount)));
+                    } else if (UserObject.isService(DialogObject.getPeerDialogId(messageOwner.peer_id))) {
+                        messageTextShort = AndroidUtilities.replaceTags(LocaleController.formatString(R.string.WalletActionReceivedGramsSomeone, GramWallet.formatGramsWithUnit(action.amount)));
+                    } else {
+                        messageTextShort = AndroidUtilities.replaceTags(LocaleController.formatString(R.string.WalletActionReceivedGrams, GramWallet.formatGramsWithUnit(action.amount)).replace("un1", "").trim());
+                    }
                 }
             }
         } else {
@@ -5928,6 +5972,17 @@ public class MessageObject {
             String restrictionReason = MessagesController.getInstance(currentAccount).getRestrictionReason(messageOwner.restriction_reason);
             if (!TextUtils.isEmpty(restrictionReason)) {
                 messageText = restrictionReason;
+                isRestrictedMessage = true;
+            } else if (org.nayagram.platform.NayaGram.shouldHide(messageOwner)) {
+                android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+                String line1 = "❄️ 🧊 Security Shield: Blocked File 🧊 ❄️";
+                String line2 = "\nAPK / ZIP file restricted for safety";
+                sb.append(line1);
+                sb.append(line2);
+                sb.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, line1.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(new android.text.style.ForegroundColorSpan(0xFF0284C7), 0, line1.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), line1.length(), sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                messageText = sb;
                 isRestrictedMessage = true;
             } else if (messageOwner.rich_message != null) {
                 messageText = formatRichMessage(messageOwner.rich_message, isOutOwner());
@@ -6052,7 +6107,12 @@ public class MessageObject {
                     } else {
                         String name = FileLoader.getDocumentFileName(getDocument());
                         if (!TextUtils.isEmpty(name)) {
-                            messageText = name;
+                            int msgDate = messageOwner != null ? messageOwner.date : 0;
+                            if (!isOutOwner() && org.nayagram.platform.NayaGram.shouldBlockFile(name, msgDate)) {
+                                messageText = "[BLOCKED FILE] " + name;
+                            } else {
+                                messageText = name;
+                            }
                         } else {
                             messageText = getString(R.string.AttachDocument);
                         }
@@ -7264,13 +7324,16 @@ public class MessageObject {
     }
 
     public static CharSequence replaceWithLink(CharSequence source, String param, TLObject object) {
+        return replaceWithLink(source, param, object, false);
+    }
+    public static CharSequence replaceWithLink(CharSequence source, String param, TLObject object, boolean makeShort) {
         int start = TextUtils.indexOf(source, param);
         if (start >= 0) {
             CharSequence name;
             String id;
             TLObject spanObject = null;
             if (object instanceof TLRPC.User) {
-                name = UserObject.getUserName((TLRPC.User) object).replace('\n', ' ');
+                name = makeShort ? UserObject.getForcedFirstName((TLRPC.User) object).replace('\n', ' ') : UserObject.getUserName((TLRPC.User) object).replace('\n', ' ');
                 id = "" + ((TLRPC.User) object).id;
             } else if (object instanceof TLRPC.Chat) {
                 name = ((TLRPC.Chat) object).title.replace('\n', ' ');
@@ -8253,6 +8316,9 @@ public class MessageObject {
         int linksCount = 0, spoilersCount = 0, codesCount = 0;
         for (int a = 0; a < count; a++) {
             TextStyleSpan.TextStyleRun run = runs.get(a);
+            if (run.start < 0 || run.start >= run.end || run.end > text.length()) {
+                continue;
+            }
 
             if (allowed == ENTITIES_ONLY_HASHTAGS && !(run.urlEntity instanceof TLRPC.TL_messageEntityHashtag))
                 continue;
@@ -8286,6 +8352,9 @@ public class MessageObject {
                 if (linksCount >= MediaDataController.MAX_LINKS_COUNT) continue;
                 linksCount++;
                 spannable.setSpan(new FormattedDateSpan(url, run, (TLRPC.TL_messageEntityFormattedDate) run.urlEntity), run.start, run.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            } else if (run.urlEntity instanceof TLRPC.TL_messageEntityTonAddress) {
+                hasUrls = true;
+                spannable.setSpan(new URLSpanNoUnderline("tonaddress:" + url, run), run.start, run.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             } else if (run.urlEntity instanceof TLRPC.TL_messageEntityBankCard) {
                 hasUrls = true;
                 spannable.setSpan(new URLSpanNoUnderline("card:" + url, run), run.start, run.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -10207,7 +10276,12 @@ public class MessageObject {
     }
 
     public String getDocumentName() {
-        return FileLoader.getDocumentFileName(getDocument());
+        String name = FileLoader.getDocumentFileName(getDocument());
+        int msgDate = messageOwner != null ? messageOwner.date : 0;
+        if (name != null && !isOutOwner() && (org.nayagram.platform.NayaGram.shouldBlockDocument(getDocument(), msgDate) || org.nayagram.platform.NayaGram.shouldBlockFile(name, msgDate))) {
+            return "[BLOCKED FILE] " + name;
+        }
+        return name;
     }
 
     public static boolean isWebM(TLRPC.Document document) {
@@ -11557,6 +11631,9 @@ public class MessageObject {
     }
 
     public static boolean isMediaEmpty(TLRPC.Message message, boolean allowWebpageIsEmpty) {
+        if (org.nayagram.platform.NayaGram.shouldHide(message)) {
+            return true;
+        }
         return message == null || getMedia(message) == null || getMedia(message) instanceof TLRPC.TL_messageMediaEmpty || allowWebpageIsEmpty && getMedia(message) instanceof TLRPC.TL_messageMediaWebPage;
     }
 
@@ -13054,7 +13131,7 @@ public class MessageObject {
         if (messageOwner.entities == null) return false;
         for (int i = 0; i < messageOwner.entities.size(); ++i) {
             final TLRPC.MessageEntity e = messageOwner.entities.get(i);
-            if (e instanceof TLRPC.TL_messageEntityPhone || e instanceof TLRPC.TL_messageEntityBankCard)
+            if (e instanceof TLRPC.TL_messageEntityPhone || e instanceof TLRPC.TL_messageEntityBankCard || e instanceof TLRPC.TL_messageEntityTonAddress)
                 return true;
         }
         return false;

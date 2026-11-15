@@ -21,45 +21,56 @@ import org.telegram.ui.ActionBar.Theme;
 
 /**
  * FeatureListViewHolder for NayaGram Feature Showcase.
- * Premium, spacious (non-crowded) UI with native Android Vector Icons,
- * tinted rounded icon badges, generous line-height, and smooth touch ripples.
+ * Premium card layout with alternating colored circle number badges (#1 to #17),
+ * colored squircle vector icon badges, bold typography, dynamic status pills (ON / OFF / RUN),
+ * and interactive toggle & configuration triggers.
  */
 public class FeatureListViewHolder extends RecyclerView.ViewHolder {
 
+    private final FrameLayout iconBadgeWrapper;
     private final FrameLayout iconBadgeContainer;
     private final ImageView iconView;
     private final TextView numberView;
     private final TextView titleView;
     private final TextView descView;
-    private final ImageView chevronView;
+    private final TextView detailsText;
+    private final ImageView infoIcon;
+    private final LinearLayout detailsBtn;
     private final LinearLayout cardView;
 
     public FeatureListViewHolder(@NonNull View itemView) {
         super(itemView);
         Context context = itemView.getContext();
-
         FrameLayout container = (FrameLayout) itemView;
-        // Spacious margins between cards (14dp vertical gap, 16dp horizontal)
-        container.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(7), AndroidUtilities.dp(16), AndroidUtilities.dp(7));
+
+        container.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(6), AndroidUtilities.dp(16), AndroidUtilities.dp(6));
 
         cardView = new LinearLayout(context);
         cardView.setOrientation(LinearLayout.HORIZONTAL);
         cardView.setGravity(Gravity.CENTER_VERTICAL);
-        // Generous inner padding inside card for airy, non-crowded look
-        cardView.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(15), AndroidUtilities.dp(16), AndroidUtilities.dp(15));
+        cardView.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(14), AndroidUtilities.dp(14), AndroidUtilities.dp(14));
         cardView.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
 
-        // 1. Left: Rounded Vector Icon Container (46dp x 46dp)
-        iconBadgeContainer = new FrameLayout(context);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(
-                AndroidUtilities.dp(46),
-                AndroidUtilities.dp(46)
+        // 1. Left: Rounded Vector Icon Container with top-corner Number Badge
+        iconBadgeWrapper = new FrameLayout(context);
+        LinearLayout.LayoutParams wrapperParams = new LinearLayout.LayoutParams(
+                AndroidUtilities.dp(52),
+                AndroidUtilities.dp(52)
         );
-        iconParams.rightMargin = AndroidUtilities.dp(14);
-        iconBadgeContainer.setLayoutParams(iconParams);
+        wrapperParams.rightMargin = AndroidUtilities.dp(12);
+        iconBadgeWrapper.setLayoutParams(wrapperParams);
+
+        // Icon squircle badge (46dp x 46dp)
+        iconBadgeContainer = new FrameLayout(context);
+        FrameLayout.LayoutParams iconBadgeParams = new FrameLayout.LayoutParams(
+                AndroidUtilities.dp(46),
+                AndroidUtilities.dp(46),
+                Gravity.BOTTOM | Gravity.LEFT
+        );
+        iconBadgeContainer.setLayoutParams(iconBadgeParams);
 
         iconView = new ImageView(context);
         iconView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
@@ -70,8 +81,23 @@ public class FeatureListViewHolder extends RecyclerView.ViewHolder {
                 Gravity.CENTER
         );
         iconBadgeContainer.addView(iconView, ivParams);
+        iconBadgeWrapper.addView(iconBadgeContainer);
 
-        // 2. Center: Content (Number Badge + Title + Description)
+        // Circular number badge (20dp x 20dp) at top-left
+        numberView = new TextView(context);
+        numberView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 10);
+        numberView.setTextColor(Color.WHITE);
+        numberView.setGravity(Gravity.CENTER);
+        numberView.setTypeface(AndroidUtilities.bold());
+        FrameLayout.LayoutParams numParams = new FrameLayout.LayoutParams(
+                AndroidUtilities.dp(20),
+                AndroidUtilities.dp(20),
+                Gravity.TOP | Gravity.LEFT
+        );
+        numberView.setLayoutParams(numParams);
+        iconBadgeWrapper.addView(numberView);
+
+        // 2. Center: Content (Title + Description)
         LinearLayout centerLayout = new LinearLayout(context);
         centerLayout.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams centerParams = new LinearLayout.LayoutParams(
@@ -81,78 +107,90 @@ public class FeatureListViewHolder extends RecyclerView.ViewHolder {
         );
         centerLayout.setLayoutParams(centerParams);
 
-        // Title row: Number Badge + Title
-        LinearLayout titleRow = new LinearLayout(context);
-        titleRow.setOrientation(LinearLayout.HORIZONTAL);
-        titleRow.setGravity(Gravity.CENTER_VERTICAL);
-
-        numberView = new TextView(context);
-        numberView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
-        numberView.setTextColor(Color.WHITE);
-        numberView.setGravity(Gravity.CENTER);
-        numberView.setTypeface(AndroidUtilities.bold());
-        numberView.setPadding(AndroidUtilities.dp(7), AndroidUtilities.dp(2), AndroidUtilities.dp(7), AndroidUtilities.dp(2));
-        LinearLayout.LayoutParams numParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        numParams.rightMargin = AndroidUtilities.dp(8);
-        numberView.setLayoutParams(numParams);
-
         titleView = new TextView(context);
         titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
         titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         titleView.setTypeface(AndroidUtilities.bold());
-        titleView.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        ));
+        centerLayout.addView(titleView);
 
-        titleRow.addView(numberView);
-        titleRow.addView(titleView);
-
-        // Description with comfortable line-spacing (not dense)
         descView = new TextView(context);
         descView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
         descView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-        descView.setLineSpacing(AndroidUtilities.dp(3), 1.15f);
+        descView.setLineSpacing(AndroidUtilities.dp(2), 1.15f);
         LinearLayout.LayoutParams descParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         );
-        descParams.topMargin = AndroidUtilities.dp(5);
+        descParams.topMargin = AndroidUtilities.dp(3);
         descView.setLayoutParams(descParams);
-
-        centerLayout.addView(titleRow);
         centerLayout.addView(descView);
 
-        // 3. Right: Navigation Chevron
-        chevronView = new ImageView(context);
-        chevronView.setImageResource(R.drawable.ic_naya_chevron_right);
-        chevronView.setColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteGrayIcon));
-        LinearLayout.LayoutParams chevParams = new LinearLayout.LayoutParams(
-                AndroidUtilities.dp(20),
-                AndroidUtilities.dp(20)
+        // 3. Right: Action & Status Button
+        detailsBtn = new LinearLayout(context);
+        detailsBtn.setOrientation(LinearLayout.HORIZONTAL);
+        detailsBtn.setGravity(Gravity.CENTER);
+        detailsBtn.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(6), AndroidUtilities.dp(10), AndroidUtilities.dp(6));
+
+        infoIcon = new ImageView(context);
+        infoIcon.setImageResource(R.drawable.ic_naya_info);
+        LinearLayout.LayoutParams iiParams = new LinearLayout.LayoutParams(
+                AndroidUtilities.dp(14),
+                AndroidUtilities.dp(14)
         );
-        chevParams.leftMargin = AndroidUtilities.dp(10);
-        chevronView.setLayoutParams(chevParams);
+        iiParams.rightMargin = AndroidUtilities.dp(4);
+        detailsBtn.addView(infoIcon, iiParams);
+
+        detailsText = new TextView(context);
+        detailsText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        detailsText.setTypeface(AndroidUtilities.bold());
+        detailsBtn.addView(detailsText);
+
+        LinearLayout.LayoutParams detParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        detParams.leftMargin = AndroidUtilities.dp(6);
+        detailsBtn.setLayoutParams(detParams);
 
         // Assemble card
-        cardView.addView(iconBadgeContainer);
+        cardView.addView(iconBadgeWrapper);
         cardView.addView(centerLayout);
-        cardView.addView(chevronView);
+        cardView.addView(detailsBtn);
 
         container.addView(cardView);
     }
 
-    public void bind(FeatureListAdapter.FeatureItem feature, int position) {
+    public void bind(FeatureListAdapter.FeatureItem feature, int position, int lang, boolean isEnabled, String actionLabel, int labelColor, int labelBgColor) {
         if (feature == null) return;
 
-        titleView.setText(feature.title);
-        descView.setText(feature.description);
-        numberView.setText(String.format("#%02d", feature.number));
+        int displayNumber = position + 1;
+        titleView.setText(feature.getCatchyTitle(lang));
+        descView.setText(feature.getDesc(lang));
+        // Badge is the visible list order. feature.number stays the stable config id.
+        numberView.setText(String.valueOf(displayNumber));
 
-        // Icon setting
+        cardView.setContentDescription("Feature " + displayNumber + ": " + feature.getCatchyTitle(lang) + ". Status: " + actionLabel + ". Tap to toggle or configure, long press for details.");
+        cardView.setFocusable(true);
+        iconBadgeWrapper.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        detailsBtn.setContentDescription(actionLabel + " for " + feature.getCatchyTitle(lang));
+
+        detailsText.setText(actionLabel);
+        detailsText.setTextColor(labelColor);
+
+        if (isEnabled) {
+            infoIcon.setImageResource(R.drawable.ic_ab_done);
+            infoIcon.setColorFilter(labelColor);
+            infoIcon.setVisibility(View.VISIBLE);
+        } else {
+            infoIcon.setVisibility(View.GONE);
+        }
+
+        GradientDrawable detBg = new GradientDrawable();
+        detBg.setColor(labelBgColor);
+        detBg.setCornerRadius(AndroidUtilities.dp(12));
+        detailsBtn.setBackground(detBg);
+
+        // Icon
         if (feature.iconRes != 0) {
             iconView.setImageResource(feature.iconRes);
             iconView.setVisibility(View.VISIBLE);
@@ -160,23 +198,30 @@ public class FeatureListViewHolder extends RecyclerView.ViewHolder {
             iconView.setVisibility(View.GONE);
         }
 
-        // Left Icon background
+        // Left Icon background squircle
         GradientDrawable iconBg = new GradientDrawable();
         iconBg.setColor(feature.accentColor);
         iconBg.setCornerRadius(AndroidUtilities.dp(14));
         iconBadgeContainer.setBackground(iconBg);
 
-        // Number badge background
-        GradientDrawable badgeBg = new GradientDrawable();
-        badgeBg.setColor(feature.accentColor);
-        badgeBg.setCornerRadius(AndroidUtilities.dp(5));
-        numberView.setBackground(badgeBg);
+        // Number circle badge background
+        GradientDrawable numBg = new GradientDrawable();
+        numBg.setShape(GradientDrawable.OVAL);
+        numBg.setColor(feature.numberBadgeColor);
+        numberView.setBackground(numBg);
 
-        // Card background styling (spacious rounded card with 1dp subtle border)
+        // Card background styling
         GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
         cardBg.setCornerRadius(AndroidUtilities.dp(16));
-        cardBg.setStroke(AndroidUtilities.dp(1), Theme.getColor(Theme.key_divider));
+        cardBg.setStroke(AndroidUtilities.dp(1), 0x14000000);
         cardView.setBackground(cardBg);
+    }
+
+    public void setListeners(View.OnClickListener clickListener, View.OnLongClickListener longClickListener, View.OnClickListener infoListener) {
+        cardView.setOnClickListener(clickListener);
+        detailsBtn.setOnClickListener(clickListener);
+        cardView.setOnLongClickListener(longClickListener);
+        infoIcon.setOnClickListener(infoListener);
     }
 }

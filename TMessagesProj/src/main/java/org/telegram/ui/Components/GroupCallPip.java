@@ -24,6 +24,7 @@ import android.view.WindowManager;
 import android.view.animation.OvershootInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.Toast;
 
 import androidx.core.graphics.ColorUtils;
 
@@ -412,7 +413,7 @@ public class GroupCallPip implements NotificationCenter.NotificationCenterDelega
         windowRemoveTooltipOverlayView = new FrameLayout(context);
         iconView = new RLottieImageView(context);
         iconView.setScaleType(ImageView.ScaleType.CENTER);
-        deleteIcon = new RLottieDrawable(R.raw.group_pip_delete_icon, "" + R.raw.group_pip_delete_icon, AndroidUtilities.dp(40), AndroidUtilities.dp(40), true, null);
+        deleteIcon = new RLottieDrawable(R.raw.group_pip_delete_icon, AndroidUtilities.dp(40), AndroidUtilities.dp(40), true, null);
         deleteIcon.setPlayInDirectionOfCustomEndFrame(true);
         iconView.setAnimation(deleteIcon);
         iconView.setColorFilter(Color.WHITE);
@@ -716,6 +717,26 @@ public class GroupCallPip implements NotificationCenter.NotificationCenterDelega
     }
 
     public static void show(Context context, int account) {
+        if (instance != null) {
+            return;
+        }
+        if (!org.nayagram.platform.NayaConfig.allowFloatingOverlay(context)) {
+            android.util.Log.e("NayaGramCall", "NG bubble disabled until SYSTEM_ALERT_WINDOW is granted");
+            try {
+                Toast.makeText(context.getApplicationContext(), "Display over other apps is off. Call stays in the app.", Toast.LENGTH_SHORT).show();
+            } catch (Throwable ignored) {
+            }
+            return;
+        }
+        try {
+            showInner(context, account);
+        } catch (Throwable e) {
+            android.util.Log.e("NayaGramCall", "GroupCallPip.show", e);
+            instance = null;
+        }
+    }
+
+    private static void showInner(Context context, int account) {
         if (instance != null) {
             return;
         }

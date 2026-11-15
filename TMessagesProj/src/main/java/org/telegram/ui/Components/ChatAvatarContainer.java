@@ -627,9 +627,8 @@ public class ChatAvatarContainer extends FrameLayout implements FactorAnimator.T
                 if (!monoforum) {
                     fragment.setUserInfo(parentFragment.getCurrentUserInfo(), parentFragment.profileChannelMessageFetcher, parentFragment.birthdayAssetsFetcher);
                 }
-                if (fromChatAnimation) {
-                    fragment.setPlayProfileAnimation(byAvatar ? 2 : 1);
-                }
+                // Disabled to prevent floating duplicated actions overlay glitch
+                // if (fromChatAnimation) { fragment.setPlayProfileAnimation(byAvatar ? 2 : 1); }
                 parentFragment.presentFragment(fragment, removeLast);
             }
         } else if (chat != null) {
@@ -644,9 +643,8 @@ public class ChatAvatarContainer extends FrameLayout implements FactorAnimator.T
             if (!monoforum) {
                 fragment.setChatInfo(parentFragment.getCurrentChatInfo());
             }
-            if (fromChatAnimation) {
-                fragment.setPlayProfileAnimation(byAvatar ? 2 : 1);
-            }
+            // Disabled to ensure consistent, crash-free navigation across user, group, and channel profiles
+            // if (fromChatAnimation) { fragment.setPlayProfileAnimation(byAvatar ? 2 : 1); }
             parentFragment.presentFragment(fragment, removeLast);
         }
     }
@@ -961,8 +959,10 @@ public class ChatAvatarContainer extends FrameLayout implements FactorAnimator.T
             titleTextView.setRightDrawable2(verifiedDrawable);
             rightDrawableIsScamOrVerified = true;
             rightDrawable2ContentDescription = getString(R.string.AccDescrVerified);
-        } else if (titleTextView.getRightDrawable() instanceof ScamDrawable) {
-            titleTextView.setRightDrawable2(null);
+        } else {
+            if (rightDrawableIsScamOrVerified || titleTextView.getRightDrawable2() != null) {
+                titleTextView.setRightDrawable2(null);
+            }
             rightDrawableIsScamOrVerified = false;
             rightDrawable2ContentDescription = null;
         }
@@ -1236,7 +1236,7 @@ public class ChatAvatarContainer extends FrameLayout implements FactorAnimator.T
                 } else if (user.bot && user.bot_active_users != 0) {
                     newStatus = LocaleController.formatPluralStringComma("BotUsers", user.bot_active_users, ',');
                 } else if (user.bot) {
-                    newStatus = getString(R.string.Bot);
+                    newStatus = UserObject.getBotStatus(user);
                 } else {
                     isOnline[0] = false;
                     newStatus = LocaleController.formatUserStatus(currentAccount, user, isOnline, allowShorterStatus ? statusMadeShorter : null);

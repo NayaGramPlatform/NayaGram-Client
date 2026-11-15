@@ -130,6 +130,62 @@ public abstract class ViewPagerActivity extends BaseFragment {
         fragmentsArr.put(position, new FragmentState(fragment));
     }
 
+    protected void preloadPosition(int position) {
+        if (viewPager == null || position < 0 || position >= getFragmentsCount()) {
+            return;
+        }
+        Context context = getContext();
+        if (context == null || getParentLayout() == null) {
+            return;
+        }
+        FragmentState state = fragmentsArr.get(position);
+        final BaseFragment fragment;
+        if (state != null) {
+            fragment = state.fragment;
+        } else {
+            fragment = createBaseFragmentAt(position);
+            if (fragment == null) {
+                return;
+            }
+            state = new FragmentState(fragment);
+            fragmentsArr.put(position, state);
+        }
+        if (!state.onCreateCalled) {
+            fragment.onFragmentCreate();
+            state.onCreateCalled = true;
+        }
+        fragment.setParentLayout(getParentLayout());
+        if (fragment.getFragmentView() == null) {
+            fragment.performCreateView(context);
+            fragment.setTitleOverlayText(titleOverlay, titleOverlayId, titleOverlayAction);
+        }
+        final View fv = fragment.getFragmentView();
+        if (fv != null && !fragment.hasOwnBackground() && fv.getBackground() == null) {
+            fv.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+        }
+        final int w = viewPager.getMeasuredWidth();
+        final int h = viewPager.getMeasuredHeight();
+        if (fv != null && w > 0 && h > 0 && (fv.getMeasuredWidth() != w || fv.getMeasuredHeight() != h || fv.isLayoutRequested())) {
+            if (lastWindowInsets != null) {
+                ViewCompat.dispatchApplyWindowInsets(fv, lastWindowInsets);
+            }
+            final ActionBar ab = fragment.getActionBar();
+            if (ab != null && ab.getMeasuredWidth() != w) {
+                ab.measure(
+                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.AT_MOST)
+                );
+            }
+            fv.measure(
+                View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY)
+            );
+            if (fv.getParent() == null) {
+                fv.layout(0, 0, w, h);
+            }
+        }
+    }
+
     protected boolean canScrollBackward(MotionEvent ev) {
         return true;
     }
@@ -152,8 +208,11 @@ public abstract class ViewPagerActivity extends BaseFragment {
         return false;
     }
 
+    private WindowInsetsCompat lastWindowInsets;
+
     @NonNull
     protected WindowInsetsCompat onApplyWindowInsets(@NonNull View v, @NonNull WindowInsetsCompat insets) {
+        lastWindowInsets = insets;
         for (int a = 0, N = fragmentsArr.size(); a < N; a++) {
             final FragmentState state = fragmentsArr.valueAt(a);
             if (state != null) {
@@ -461,6 +520,7 @@ public abstract class ViewPagerActivity extends BaseFragment {
         protected void onItemSelected(View currentPage, View oldPage, int position, int oldPosition) {
             super.onItemSelected(currentPage, oldPage, position, oldPosition);
             checkFragmentsVisibility();
+            checkSystemBarColors();
         }
 
         @Override
@@ -468,7 +528,6 @@ public abstract class ViewPagerActivity extends BaseFragment {
             super.onTabAnimationUpdate(manual);
             onViewPagerTabAnimationUpdate(manual);
             checkFragmentsVisibility();
-            checkSystemBarColors();
         }
 
         @Override
@@ -483,7 +542,7 @@ public abstract class ViewPagerActivity extends BaseFragment {
 
         @Override
         protected long getManualScrollDuration() {
-            return 320L;
+            return 280L;
         }
 
         @Override

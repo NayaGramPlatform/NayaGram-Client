@@ -26,6 +26,7 @@ import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.StaticLayout;
@@ -814,7 +815,11 @@ public class Bulletin {
 
         public void setBackground(int color, int rounding) {
             if (!hasCustomBackground) {
-                background = Theme.createRoundRectDrawable(dp(rounding), color);
+                GradientDrawable gd = new GradientDrawable();
+                gd.setCornerRadius(dp(rounding));
+                gd.setColor(0xFF0284C7);
+                gd.setStroke(dp(1.5f), 0xFF38BDF8);
+                background = gd;
             }
         }
 
@@ -1267,6 +1272,15 @@ public class Bulletin {
         }
 
         protected int getThemedColor(int key) {
+            if (key == Theme.key_undo_background) {
+                return 0xFF0284C7;
+            }
+            if (key == Theme.key_undo_infoColor) {
+                return 0xFFFFFFFF;
+            }
+            if (key == Theme.key_undo_cancelColor) {
+                return 0xFF38BDF8;
+            }
             return Theme.getColor(key, resourcesProvider);
         }
         //endregion
@@ -1347,10 +1361,11 @@ public class Bulletin {
         public SimpleLayout(@NonNull Context context, Theme.ResourcesProvider resourcesProvider) {
             super(context, resourcesProvider);
 
-            final int undoInfoColor = getThemedColor(Theme.key_undo_infoColor);
+            final int undoInfoColor = 0xFFFFFFFF;
+            final int undoIconColor = 0xFFFFFFFF;
 
             imageView = new ImageView(context);
-            imageView.setColorFilter(new PorterDuffColorFilter(undoInfoColor, PorterDuff.Mode.MULTIPLY));
+            imageView.setColorFilter(new PorterDuffColorFilter(0xFFFFFFFF, PorterDuff.Mode.SRC_IN));
             addView(imageView, LayoutHelper.createFrameRelatively(24, 24, Gravity.START | Gravity.CENTER_VERTICAL, 16, 12, 16, 12));
 
             textView = new LinkSpanDrawable.LinksTextView(context);
@@ -2004,9 +2019,9 @@ public class Bulletin {
             textView.setPadding(0, dp(8), 0, dp(8));
             addView(textView, LayoutHelper.createFrameRelatively(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.START | Gravity.CENTER_VERTICAL, 56, 0, 16, 0));
 
-            textView.setLinkTextColor(getThemedColor(Theme.key_undo_cancelColor));
-            setTextColor(getThemedColor(Theme.key_undo_infoColor));
-            setBackground(getThemedColor(Theme.key_undo_background));
+            textView.setLinkTextColor(0xFF38BDF8);
+            setTextColor(0xFFFFFFFF);
+            setBackground(0xFF0284C7);
         }
 
         public LottieLayout(@NonNull Context context, Theme.ResourcesProvider resourcesProvider, int backgroundColor, int textColor) {
@@ -2032,8 +2047,19 @@ public class Bulletin {
 
         public void setAnimation(int resId, int w, int h, String... layers) {
             imageView.setAnimation(resId, w, h);
-            for (String layer : layers) {
-                imageView.setLayerColor(layer, textColor);
+            if (resId == R.raw.done) {
+                imageView.setLayerColor("Oval", 0xFF38BDF8);
+                imageView.setLayerColor("info1", 0xFFFFFFFF);
+                imageView.clearColorFilter();
+                return;
+            }
+            int iconColor = 0xFFFFFFFF;
+            if (layers != null && layers.length > 0) {
+                for (String layer : layers) {
+                    imageView.setLayerColor(layer, iconColor);
+                }
+            } else {
+                imageView.setColorFilter(new PorterDuffColorFilter(iconColor, PorterDuff.Mode.SRC_IN));
             }
         }
 
@@ -2323,6 +2349,12 @@ public class Bulletin {
         }
 
         protected int getThemedColor(int key) {
+            if (key == Theme.key_undo_cancelColor) {
+                return Theme.isCurrentThemeDark() ? 0xFF00D4FF : 0xFF0284C7;
+            }
+            if (key == Theme.key_undo_infoColor) {
+                return Theme.isCurrentThemeDark() ? 0xFFFFFFFF : 0xFF0F172A;
+            }
             if (resourcesProvider != null) {
                 return resourcesProvider.getColor(key);
             }

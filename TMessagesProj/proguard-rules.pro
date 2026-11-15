@@ -1,4 +1,8 @@
--keep public class com.google.android.gms.* { public *; }
+# Allow R8 + GMS consumer rules to strip unused Play Services / Ads classes safely
+-dontwarn com.google.android.gms.**
+-dontwarn com.google.ads.**
+-keep class com.google.android.gms.common.ConnectionResult { *; }
+-keep class com.google.android.gms.common.GoogleApiAvailability { *; }
 -keepnames @com.google.android.gms.common.annotation.KeepName class *
 -keepclassmembernames class * {
     @com.google.android.gms.common.annotation.KeepName *;
@@ -11,23 +15,27 @@
 -keep class org.webrtc.* { *; }
 -keep class org.webrtc.audio.* { *; }
 -keep class org.webrtc.voiceengine.* { *; }
--keep class org.telegram.messenger.* { *; }
+-keepclasseswithmembers,includedescriptorclasses class org.telegram.messenger.* {
+    native <methods>;
+}
+-keep class org.telegram.messenger.AnimatedFileDrawableStream { *; }
+-keep class org.telegram.messenger.NotificationBadge$* { *; }
 -keep class org.telegram.messenger.camera.* { *; }
 -keep class org.telegram.messenger.secretmedia.* { *; }
--keep class org.telegram.messenger.support.* { *; }
 -keep class org.telegram.messenger.support.* { *; }
 -keep class org.telegram.messenger.time.* { *; }
 -keep class org.telegram.messenger.video.* { *; }
 -keep class org.telegram.messenger.voip.* { *; }
 -keep class org.telegram.SQLite.** { *; }
--keep class org.telegram.tgnet.ConnectionsManager { *; }
--keep class org.telegram.tgnet.NativeByteBuffer { *; }
--keep class org.telegram.tgnet.RequestTimeDelegate { *; }
--keep class org.telegram.tgnet.RequestDelegate { *; }
+-keep class org.telegram.tgnet.** { *; }
 -keep class org.telegram.ui.Stories.recorder.FfmpegAudioWaveformLoader { *; }
 -keep class androidx.mediarouter.app.MediaRouteButton { *; }
 -keepclassmembers class ** {
     @android.webkit.JavascriptInterface <methods>;
+}
+
+-keep class org.telegram.utils.code.highlight.PrismaHighlighter {
+    private static native <methods>;
 }
 
 # https://developers.google.com/ml-kit/known-issues#android_issues
@@ -42,6 +50,9 @@
 -dontwarn org.checkerframework.**
 -dontwarn javax.annotation.**
 
+# Optional desktop-only JAI ImageIO SPI classes are not available on Android; the app uses Android graphics APIs.
+-dontwarn javax.imageio.spi.**
+
 -keep class io.nano.tex.** {*;}
 
 # JLatexMath: macro/atom classes are loaded reflectively by Class.forName
@@ -53,10 +64,17 @@
 #-dontoptimize
 #-dontobfuscate
 
--keep class org.telegram.tgnet.** { *; }
-
-# NayaGram Platform Exclusive Rules
--keep class org.nayagram.** { *; }
+# NayaGram Platform Targeted Rules (Gson models & TensorFlow JNI)
+-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
+-keepclassmembers class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
+-keep class org.telegram.messenger.AutoReplyManager$* { *; }
+-keep class org.nayagram.platform.history.NGMessageEditHistory$* { *; }
 -dontwarn org.nayagram.**
--keep class org.tensorflow.** { *; }
+-keepclasseswithmembers,includedescriptorclasses class org.tensorflow.** {
+    native <methods>;
+}
 -dontwarn org.tensorflow.**

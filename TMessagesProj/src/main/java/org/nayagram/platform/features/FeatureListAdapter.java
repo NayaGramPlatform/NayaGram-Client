@@ -3,221 +3,612 @@ package org.nayagram.platform.features;
 import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
+import android.widget.EditText;
+import org.nayagram.platform.NayaConfig;
+import org.nayagram.platform.storage.SmartStorageDoctor;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.R;
+import org.telegram.ui.ActionBar.AlertDialog;
+import org.telegram.ui.ActionBar.BaseFragment;
+import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.BulletinFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * FeatureListAdapter - NayaGram Feature Showcase Adapter.
- * Features Alternating Slide-In Animation (Left & Right) on scroll,
- * well-spaced and non-crowded layout with native XML Vector Drawables.
+ * FeatureListAdapter - NayaGram Exclusive Features Showcase.
+ * Clean list without Ghost Mode / Anti-Delete (policy-compliant).
+ * Supports English / বাংলা / العربية.
  */
 public class FeatureListAdapter extends RecyclerView.Adapter<FeatureListViewHolder> {
 
-    private final List<FeatureItem> features;
+    public static final int LANG_EN = 0;
+    public static final int LANG_BN = 1;
+    public static final int LANG_AR = 2;
+
     private final Context context;
-    private int lastAnimatedPosition = -1;
+    private BaseFragment fragment;
+    private final List<FeatureItem> features = new ArrayList<>();
+    private final List<FeatureItem> allFeatures = new ArrayList<>();
+    private int currentLang = LANG_EN;
 
     public FeatureListAdapter(Context context) {
+        this(context, null);
+    }
+
+    public FeatureListAdapter(Context context, BaseFragment fragment) {
         this.context = context;
-        this.features = new ArrayList<>();
+        this.fragment = fragment;
         initializeFeatures();
     }
 
+    public void setFragment(BaseFragment fragment) {
+        this.fragment = fragment;
+    }
+
+    public void setLanguage(int lang) {
+        this.currentLang = lang;
+        notifyDataSetChanged();
+    }
+
+    public int getCurrentLang() {
+        return currentLang;
+    }
+
     private void initializeFeatures() {
-        features.add(new FeatureItem(
-                "Ghost Mode",
-                "Hidden typing indicator and online status",
-                1,
-                0xFF3DDC97,
-                R.drawable.ic_naya_ghost
-        ));
+        features.clear();
+        allFeatures.clear();
 
-        features.add(new FeatureItem(
-                "Message Scheduler",
-                "Schedule messages for automatic delivery",
-                2,
-                0xFF4D9EFF,
-                R.drawable.outline_message_time_24
-        ));
-
-        features.add(new FeatureItem(
-                "Smart Auto-Reply",
-                "Keyword-based automatic response system",
-                3,
-                0xFF9F6BFF,
-                R.drawable.menu_reply
-        ));
-
-        features.add(new FeatureItem(
-                "Story Saver",
-                "Download HD quality stories instantly",
-                4,
-                0xFF4CC9F0,
-                R.drawable.ic_naya_download
-        ));
-
-        features.add(new FeatureItem(
-                "Anonymous Viewer",
-                "View stories without revealing yourself",
-                5,
-                0xFF00C2A8,
-                R.drawable.outline_profile_story
-        ));
-
-        features.add(new FeatureItem(
-                "Anti-Delete Recovery",
-                "Recover permanently deleted messages",
-                6,
-                0xFF7B61FF,
-                R.drawable.outline_shield_check
-        ));
-
-        features.add(new FeatureItem(
-                "Forward Without Quote",
-                "Share media without forwarding tag",
-                7,
-                0xFF26C281,
-                R.drawable.send_plane_24
-        ));
-
-        features.add(new FeatureItem(
-                "Voice Transcription",
-                "Convert voice messages to searchable text",
-                8,
-                0xFF00A8E8,
-                R.drawable.ic_naya_voice
-        ));
-
-        features.add(new FeatureItem(
-                "Smart Chat Folders",
-                "Organize conversations by categories",
+        // 9. Smart Chat Folders
+        allFeatures.add(new FeatureItem(
                 9,
-                0xFF8A5CF6,
-                R.drawable.settings_folders
+                0xFF14B8A6,
+                0xFF0F766E,
+                R.drawable.msg_folders,
+                new String[]{"Smart Chat Folders", "স্মার্ট চ্যাট ফোল্ডার", "مجلدات الدردشة الذكية"},
+                new String[]{
+                        "Not active yet. This card will be enabled after native Telegram folder integration is implemented.",
+                        "এখনো চালু নয়। টেলিগ্রামের নেটিভ ফোল্ডার সংযোগ সম্পন্ন হলে ফিচারটি চালু হবে।",
+                        "غير نشط حاليًا. سيتم تفعيله بعد تنفيذ تكامل مجلدات تيليجرام الأصلي."
+                }
         ));
 
-        features.add(new FeatureItem(
-                "Call Protection",
-                "Confirm before sending calls or voice",
-                10,
-                0xFF34D399,
-                R.drawable.outline_profile_call_24
-        ));
 
-        features.add(new FeatureItem(
-                "User ID Display",
-                "See unique ID and server location",
+
+        // 11. User ID & DC Display
+        allFeatures.add(new FeatureItem(
                 11,
-                0xFF3B82F6,
-                R.drawable.outline_profile_member_24
+                0xFFA855F7,
+                0xFF7E22CE,
+                R.drawable.msg_info,
+                new String[]{"User ID & DC", "ইউজার আইডি ও ডিসি", "معرف المستخدم ومركز البيانات"},
+                new String[]{
+                        "Show your Telegram ID and current account data-center ID on your own profile. Long-press to copy.",
+                        "নিজের প্রোফাইলে টেলিগ্রাম আইডি ও বর্তমান অ্যাকাউন্টের ডেটা-সেন্টার আইডি দেখুন। কপি করতে চেপে ধরুন।",
+                        "اعرض معرف تيليجرام ومعرف مركز بيانات الحساب الحالي في ملفك الشخصي. اضغط مطولًا للنسخ."
+                }
         ));
 
-        features.add(new FeatureItem(
-                "Modular NayaConfig",
-                "Custom settings in isolated module",
+        // 12. Modular Config
+        allFeatures.add(new FeatureItem(
                 12,
-                0xFF7C3AED,
-                R.drawable.settings_features
+                0xFF22C55E,
+                0xFF15803D,
+                R.drawable.msg_settings,
+                new String[]{"Modular Config", "মডুলার কনফিগ", "تكوين معياري"},
+                new String[]{
+                        "Not active yet. The toggle does not change how settings are stored or isolated.",
+                        "এখনো চালু নয়। এই টগল সেটিংস সংরক্ষণ বা আলাদা রাখার পদ্ধতি বদলায় না।",
+                        "غير نشط حاليًا. لا يغيّر هذا المفتاح طريقة حفظ الإعدادات أو عزلها."
+                }
         ));
 
-        features.add(new FeatureItem(
-                "Digital Wellbeing & Focus Mode",
-                "Mute group pings for study, work & prayer with VIP bypass",
+        // 13. Focus Mode
+        allFeatures.add(new FeatureItem(
                 13,
-                0xFF00C2A8,
-                R.drawable.outline_profile_mute_24
+                0xFF0EA5E9,
+                0xFF0369A1,
+                R.drawable.msg_mute,
+                new String[]{"Focus Mode", "ফোকাস মোড", "وضع التركيز"},
+                new String[]{
+                        "Not active yet. Notification scheduling and VIP bypass are not connected.",
+                        "এখনো চালু নয়। নোটিফিকেশন সময়সূচি ও VIP ব্যতিক্রম সংযুক্ত হয়নি।",
+                        "غير نشط حاليًا. لم يتم ربط جدولة الإشعارات واستثناء جهات VIP."
+                }
         ));
 
-        features.add(new FeatureItem(
-                "Smart Storage Doctor",
-                "One-tap cache and orphaned media optimizer",
-                14,
-                0xFF4D9EFF,
-                R.drawable.settings_data
-        ));
-
-        features.add(new FeatureItem(
-                "Ultra Battery & Low-Data Saver",
-                "Smart eco-mode and metered data optimization",
+        // 15. Battery Saver
+        allFeatures.add(new FeatureItem(
                 15,
-                0xFF00C2A8,
-                R.drawable.settings_power
+                0xFF16A34A,
+                0xFF166534,
+                R.drawable.msg2_battery,
+                new String[]{"Battery Saver", "ব্যাটারি সেভার", "توفير البطارية"},
+                new String[]{
+                        "Not active yet. Low-battery detection and automatic playback controls are not connected.",
+                        "এখনো চালু নয়। কম ব্যাটারি শনাক্তকরণ ও স্বয়ংক্রিয় প্লেব্যাক নিয়ন্ত্রণ সংযুক্ত হয়নি।",
+                        "غير نشط حاليًا. لم يتم ربط اكتشاف انخفاض البطارية والتحكم التلقائي بالتشغيل."
+                }
         ));
 
-        features.add(new FeatureItem(
-                "Biometric Chat Locker",
-                "Protect sensitive chats with fingerprint and PIN",
+        // 16. Chat Locker
+        allFeatures.add(new FeatureItem(
                 16,
-                0xFF7B61FF,
-                R.drawable.outline_header_lock_24
+                0xFF2563EB,
+                0xFF1E40AF,
+                R.drawable.msg_secret,
+                new String[]{"Chat Locker", "চ্যাট লকার", "قفل الدردشة"},
+                new String[]{
+                        "Not active yet. No chat is protected by this preference alone.",
+                        "এখনো চালু নয়। শুধু এই সেটিং দিয়ে কোনো চ্যাট সুরক্ষিত হয় না।",
+                        "غير نشط حاليًا. هذا الإعداد وحده لا يحمي أي محادثة."
+                }
         ));
 
-        features.add(new FeatureItem(
-                "In-Chat Instant Translator",
-                "Translate foreign messages to Bengali with LRU cache",
+        // 17. Instant Translator
+        allFeatures.add(new FeatureItem(
                 17,
-                0xFF3DDC97,
-                R.drawable.outline_ai_translate2
+                0xFFDB2777,
+                0xFF9D174D,
+                R.drawable.msg_translate,
+                new String[]{"Instant Translator", "ইনস্ট্যান্ট ট্রান্সলেটর", "المترجم الفوري"},
+                new String[]{
+                        "Not active yet. No translation service or in-chat action is connected.",
+                        "এখনো চালু নয়। অনুবাদ সেবা বা চ্যাটের ভেতরের অ্যাকশন সংযুক্ত হয়নি।",
+                        "غير نشط حاليًا. لم يتم ربط خدمة ترجمة أو إجراء داخل المحادثة."
+                }
         ));
+
+        // 18. Adaptive Network & Data Saver
+        allFeatures.add(new FeatureItem(
+                18,
+                0xFF059669,
+                0xFF047857,
+                R.drawable.msg2_data,
+                new String[]{"Network Data Saver", "নেটওয়ার্ক ও ডেটা সেভার", "موفّر بيانات الشبكة"},
+                new String[]{
+                        "Uses Telegram's native media-streaming preference. It is not a full network optimizer.",
+                        "টেলিগ্রামের নিজস্ব মিডিয়া স্ট্রিমিং সেটিং ব্যবহার করে। এটি সম্পূর্ণ নেটওয়ার্ক অপ্টিমাইজার নয়।",
+                        "يستخدم إعداد تيليجرام الأصلي لبث الوسائط، وليس محسنًا شاملًا للشبكة."
+                }
+        ));
+
+        // 19. WebRTC Acoustic Noise Suppression
+        allFeatures.add(new FeatureItem(
+                19,
+                0xFF2563EB,
+                0xFF1D4ED8,
+                R.drawable.msg_calls,
+                new String[]{"Acoustic Noise Shield", "অডিও নয়েজ সাপ্রেশন", "حاجب الضوضاء الصوتية"},
+                new String[]{
+                        "Not active yet. The call audio pipeline has no verified noise-suppression wiring.",
+                        "এখনো চালু নয়। কলের অডিও পাইপলাইনে নয়েজ সাপ্রেশন সংযুক্ত থাকার নিশ্চয়তা নেই।",
+                        "غير نشط حاليًا. لم يتم التحقق من ربط تقليل الضوضاء بمسار صوت المكالمة."
+                }
+        ));
+
+        // 20. Smart Storage & Cache Auto-Limiter
+        allFeatures.add(new FeatureItem(
+                20,
+                0xFF7C3AED,
+                0xFF6D28D9,
+                R.drawable.settings_data,
+                new String[]{"Smart Storage Guard", "স্মার্ট স্টোরেজ গার্ড", "حارس التخزين الذكي"},
+                new String[]{
+                        "Scan app cache on demand and review the report before cleaning. No automatic storage limiter runs.",
+                        "প্রয়োজনে অ্যাপের ক্যাশ স্ক্যান করু�� এবং পরিষ্কারের আগে রিপোর্ট দেখুন। স্বয়ংক্রিয় স্টোরেজ লিমিটার চলে না।",
+                        "افحص ذاكرة التطبيق عند الطلب وراجع التقرير قبل التنظيف. لا يعمل محدد تخزين تلقائي."
+                }
+        ));
+
+        // 21. External Link Guard (functional: Browser.java checks this preference)
+        allFeatures.add(new FeatureItem(
+                21,
+                0xFFDC2626,
+                0xFFB91C1C,
+                R.drawable.media_link_24,
+                new String[]{"External Link Guard", "বাহ্যিক লিংক সুরক্ষা", "حماية الروابط الخارجية"},
+                new String[]{
+                        "Ask before opening unfamiliar external websites.",
+                        "অপরিচিত বাহ্যিক ওয়েবসাইট খোলার আগে নিশ্চিতকরণ নিন।",
+                        "اطلب التأكيد قبل فتح مواقع خارجية غير مألوفة."
+                }
+        ));
+
+        // 22. Readable Text (functional: applies Telegram's native message font size)
+        allFeatures.add(new FeatureItem(
+                22,
+                0xFF7C3AED,
+                0xFF6D28D9,
+                R.drawable.settings_language,
+                new String[]{"Readable Text", "সহজপাঠ্য লেখা", "نص أسهل للقراءة"},
+                new String[]{
+                        "Increase message text size for comfortable reading.",
+                        "আরামদায়কভাবে পড়তে মেসেজের লেখা বড় করুন।",
+                        "كبّر نص الرسائل لقراءة أكثر راحة."
+                }
+        ));
+
+                // 24. Anti-Delete Messages (Prevent Message Deletion)
+        allFeatures.add(new FeatureItem(
+                24,
+                0xFF0EA5E9,
+                0xFF0284C7,
+                R.drawable.msg_secret,
+                new String[]{"Anti-Delete Messages", "ডিলিট মেসেজ প্রতিরোধ", "منع حذف الرسائل"},
+                new String[]{
+                        "Keep deleted messages visible in chat with a stylish cyan-blue tag indicator.",
+                        "প্রেরক মেসেজ ডিলিট করলেও চ্যাটে সায়ান-ব্লু ব্যাজসহ সেভ থাকবে।",
+                        "احفظ الرسائل المحذوفة في المحادثة مع ��ارة إشارة زرقاء أنيقة."
+                }
+        ));
+
+// 23. Reduce Motion (functional: applies Telegram's animation preference)
+        allFeatures.add(new FeatureItem(
+                23,
+                0xFF64748B,
+                0xFF475569,
+                R.drawable.settings_power,
+                new String[]{"Reduce Motion", "অ্যানিমেশন কমান", "تقليل الحركة"},
+                new String[]{
+                        "Reduce interface animations while keeping messaging and calls available.",
+                        "মেসেজিং ও কল চালু রেখেই ইন্টারফেসের অ্যানিমেশন কমান।",
+                        "قلل حركات الواجهة مع استمرار الرسائل والمكالمات."
+                }
+        ));
+        // Only verified, native-backed features belong on the main feature page.
+        // Planned or tutorial-only items stay documented in FeatureTutorialDialog.
+        for (FeatureItem item : allFeatures) {
+            if (isMainPageFeature(item)) {
+                features.add(item);
+            }
+        }
+    }
+
+    /** Filters the showcase across English, Bengali and Arabic titles/descriptions. */
+    public void setSearchQuery(String query) {
+        String normalized = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
+        features.clear();
+        for (FeatureItem item : allFeatures) {
+            if (isMainPageFeature(item) && (normalized.isEmpty() || matchesFeature(item, normalized))) {
+                features.add(item);
+            }
+        }
+        notifyDataSetChanged();
+    }
+
+    private boolean matchesFeature(FeatureItem item, String query) {
+        for (int lang = 0; lang < 3; lang++) {
+            if (item.getCatchyTitle(lang).toLowerCase(java.util.Locale.ROOT).contains(query)
+                    || item.getDesc(lang).toLowerCase(java.util.Locale.ROOT).contains(query)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @NonNull
     @Override
     public FeatureListViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        FrameLayout itemView = new FrameLayout(context);
-        itemView.setLayoutParams(new ViewGroup.LayoutParams(
+        FrameLayout container = new FrameLayout(context);
+        container.setLayoutParams(new RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
-        return new FeatureListViewHolder(itemView);
+        return new FeatureListViewHolder(container);
+    }
+
+    public boolean isFeatureEnabled(FeatureItem item) {
+        NayaConfig cfg = NayaConfig.getInstance();
+        if (cfg == null || isImplementationPending(item)) return false;
+        switch (item.number) {
+            case 2: return cfg.isMessageScheduler();
+            case 3: return cfg.isSmartAutoReply();
+            case 4: return cfg.isStorySaverEnabled();
+            case 5: return cfg.isAnonymousStories();
+            case 18: return cfg.isDataSaverEnabled();
+            case 20: return false; // Action card: runs a scan instead of representing a toggle
+            case 21: return cfg.isLinkGuardEnabled();
+            case 22: return cfg.isReadableTextEnabled();
+            case 23: return cfg.isReduceMotion();
+            case 24: return cfg.isPreventMessageDeletionEnabled();
+            case 11: return cfg.isShowIdAndDc();
+            case 14: return true;
+            default: return false;
+        }
+    }
+
+    /**
+     * The main page only exposes features with a verified behavior path.
+     * Feature Pipeline is documentation and never contributes feature cards.
+     */
+    private boolean isMainPageFeature(FeatureItem item) {
+        switch (item.number) {
+            case 11: // User ID & active data-center ID on profile
+            case 18: // Telegram native media-streaming preference
+            case 20: // On-demand storage scan and reviewed cache cleanup
+            case 21: // External Link Guard
+            case 22: // Telegram native message font size
+            case 23: // Telegram interface animation preference
+            case 24: // Anti-Delete Messages
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** Features whose UI is present but whose native behavior is not implemented yet. */
+    private boolean isImplementationPending(FeatureItem item) {
+        switch (item.number) {
+            case 2:  // Message Scheduler has no delivery engine
+            case 4:  // Story Saver is disabled
+            case 5:  // Anonymous Stories is disabled
+            case 9:  // Smart Chat Folders
+            case 13: // Focus Mode
+            case 15: // Battery Saver
+            case 16: // Chat Locker
+            case 17: // Instant Translator
+            case 19: // Noise Suppression
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private String getActionLabel(FeatureItem item) {
+        if (item.number == 20) {
+            return currentLang == LANG_BN ? "স্ক্যান ›" : (currentLang == LANG_AR ? "فحص ›" : "SCAN ›");
+        }
+        if (isImplementationPending(item)) {
+            return currentLang == LANG_BN ? "পরে ›" : (currentLang == LANG_AR ? "لاحقًا" : "SOON");
+        }
+        return currentLang == LANG_BN ? "বিবরণ ›" : (currentLang == LANG_AR ? "التفاصيل ›" : "Details ›");
+    }
+
+    private int getLabelTextColor(FeatureItem item) {
+        if (item.number == 20) return 0xFF7C3AED;
+        return 0xFF0284C7;
+    }
+
+    private int getLabelBgColor(FeatureItem item) {
+        if (item.number == 20) return 0x227C3AED;
+        return 0x200EA5E9;
     }
 
     @Override
     public void onBindViewHolder(@NonNull FeatureListViewHolder holder, int position) {
-        FeatureItem feature = features.get(position);
-        holder.bind(feature, position);
-        applySlideAnimation(holder.itemView, position);
+        FeatureItem item = features.get(position);
+        boolean enabled = isFeatureEnabled(item);
+        String label = getActionLabel(item);
+        int textColor = getLabelTextColor(item);
+        int bgColor = getLabelBgColor(item);
+
+        holder.bind(item, position, currentLang, enabled, label, textColor, bgColor);
+        holder.setListeners(
+                v -> handleFeatureClick(item, position),
+                v -> {
+                    showFeatureDetailsDialog(item, position + 1);
+                    return true;
+                },
+                v -> showFeatureDetailsDialog(item, position + 1)
+        );
     }
 
-    /**
-     * Alternating smooth slide-in animation from Left and Right on scroll.
-     * Even positions slide in from Left, Odd positions slide in from Right.
-     */
-    private void applySlideAnimation(View view, int position) {
-        if (position > lastAnimatedPosition) {
-            // Even: slide from left (-60dp), Odd: slide from right (+60dp)
-            float startTranslationX = (position % 2 == 0)
-                    ? -AndroidUtilities.dp(60)
-                    : AndroidUtilities.dp(60);
+    private void handleFeatureClick(FeatureItem item, int position) {
+        if (item.number == 20) {
+            showStorageDoctorScanDialog();
+            return;
+        }
+        showFeatureDetailsDialog(item, position + 1);
+    }
 
-            view.setTranslationX(startTranslationX);
-            view.setAlpha(0.0f);
-
-            view.animate()
-                    .translationX(0f)
-                    .alpha(1.0f)
-                    .setDuration(340)
-                    .setInterpolator(new DecelerateInterpolator(1.4f))
-                    .setStartDelay(Math.min(position * 30L, 180L))
-                    .start();
-
-            lastAnimatedPosition = position;
+    public void toggleFeatureState(FeatureItem item, boolean newState) {
+        NayaConfig cfg = NayaConfig.getInstance();
+        if (cfg == null) return;
+        switch (item.number) {
+            case 2: cfg.setMessageScheduler(newState); break;
+            case 3: cfg.setSmartAutoReply(newState); break;
+            case 4: cfg.setStorySaverEnabled(newState); break;
+            case 5: cfg.setAnonymousStories(newState); break;
+            case 18: cfg.setDataSaverEnabled(newState); break;
+            case 21: cfg.setLinkGuardEnabled(newState); break;
+            case 22: cfg.setReadableTextEnabled(newState); break;
+            case 23: cfg.setReduceMotion(newState); break;
+            case 24: cfg.setPreventMessageDeletionEnabled(newState); break;
+            case 11: cfg.setShowIdAndDc(newState); break;
         }
     }
 
-    @Override
-    public void onViewDetachedFromWindow(@NonNull FeatureListViewHolder holder) {
-        super.onViewDetachedFromWindow(holder);
-        holder.itemView.clearAnimation();
+    private void showStorageDoctorScanDialog() {
+        if (context == null) return;
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setTitle("⚡ Smart Storage Doctor");
+        builder.setMessage("Scanning cache & temporary files...");
+
+        AlertDialog progressDialog = builder.create();
+        progressDialog.show();
+
+        SmartStorageDoctor.getInstance().scanStorage(context, report -> {
+            try {
+                progressDialog.dismiss();
+            } catch (Throwable ignored) {
+            }
+
+            if (report == null || report.totalReclaimableBytes <= 0) {
+                AlertDialog.Builder cleanBldr = new AlertDialog.Builder(context);
+                cleanBldr.setTitle("✨ Storage Clean");
+                cleanBldr.setMessage("Your cache is completely optimized and clean! No unnecessary temporary files found.");
+                cleanBldr.setPositiveButton("OK", null);
+                cleanBldr.show();
+                return;
+            }
+
+            AlertDialog.Builder cleanBldr = new AlertDialog.Builder(context);
+            cleanBldr.setTitle("🧹 Storage Analysis");
+            cleanBldr.setMessage("Found reclaimable cache:\n- Total Cache: " + report.getFormattedTotal() + "\n- Cached Files: " + report.fileCount + "\nClean cache now to boost NayaGram speed?");
+            cleanBldr.setPositiveButton("Clean Now", (d, w) -> {
+                SmartStorageDoctor.getInstance().cleanCache(context, (freed, success) -> {
+                    if (fragment != null) {
+                        BulletinFactory.of(fragment).createSimpleBulletin(
+                                R.raw.done,
+                                "Cleaned " + SmartStorageDoctor.formatSize(freed) + " cache!"
+                        ).show();
+                    }
+                });
+            });
+            cleanBldr.setNegativeButton("Cancel", null);
+            cleanBldr.show();
+        });
+    }
+
+    private void showAutoReplyConfigDialog() {
+        if (context == null) return;
+        final NayaConfig cfg = NayaConfig.getInstance();
+        final int[] hourOptions = {1, 6, 24};
+        final String[] hourLabels = {"1 hour", "6 hours", "24 hours"};
+        final int[] selectedHours = {cfg.getAutoReplyCooldownHours()};
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(context);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = AndroidUtilities.dp(20);
+        root.setPadding(pad, pad, pad, AndroidUtilities.dp(14));
+
+        android.widget.TextView title = new android.widget.TextView(context);
+        title.setText("Smart Auto-Reply");
+        title.setTextSize(20);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setTextColor(0xFF0F172A);
+        root.addView(title);
+
+        android.widget.TextView subtitle = new android.widget.TextView(context);
+        subtitle.setText("Sent to people who message you in a private chat. Each chat gets a reply once per cooldown.");
+        subtitle.setTextSize(13);
+        subtitle.setTextColor(0xFF64748B);
+        subtitle.setPadding(0, AndroidUtilities.dp(6), 0, AndroidUtilities.dp(14));
+        root.addView(subtitle);
+
+        final EditText et = new EditText(context);
+        et.setText(cfg.getAutoReplyText());
+        et.setSelection(et.getText().length());
+        et.setMinLines(3);
+        et.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        et.setTextColor(0xFF0F172A);
+        et.setHintTextColor(0xFF94A3B8);
+        et.setHint("Type your auto-reply");
+        et.setTextSize(15);
+        et.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(12), AndroidUtilities.dp(14), AndroidUtilities.dp(12));
+        et.setBackground(roundedBox(0xFFF1F5F9, 0xFF38BDF8, 14, 1));
+        root.addView(et, matchWrap());
+
+        android.widget.TextView cooldownLabel = new android.widget.TextView(context);
+        cooldownLabel.setText("Reply again to the same person after");
+        cooldownLabel.setTextSize(13);
+        cooldownLabel.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        cooldownLabel.setTextColor(0xFF334155);
+        cooldownLabel.setPadding(0, AndroidUtilities.dp(16), 0, AndroidUtilities.dp(8));
+        root.addView(cooldownLabel);
+
+        android.widget.LinearLayout chipRow = new android.widget.LinearLayout(context);
+        chipRow.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        final android.widget.TextView[] chips = new android.widget.TextView[hourOptions.length];
+        for (int i = 0; i < hourOptions.length; i++) {
+            final int idx = i;
+            android.widget.TextView chip = new android.widget.TextView(context);
+            chip.setText(hourLabels[i]);
+            chip.setTextSize(13);
+            chip.setGravity(android.view.Gravity.CENTER);
+            chip.setPadding(0, AndroidUtilities.dp(10), 0, AndroidUtilities.dp(10));
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            if (i > 0) lp.leftMargin = AndroidUtilities.dp(8);
+            chipRow.addView(chip, lp);
+            chips[i] = chip;
+            chip.setOnClickListener(v -> {
+                selectedHours[0] = hourOptions[idx];
+                refreshCooldownChips(chips, hourOptions, selectedHours[0]);
+            });
+        }
+        refreshCooldownChips(chips, hourOptions, selectedHours[0]);
+        root.addView(chipRow, matchWrap());
+
+        android.widget.LinearLayout buttonRow = new android.widget.LinearLayout(context);
+        buttonRow.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        buttonRow.setGravity(android.view.Gravity.END | android.view.Gravity.CENTER_VERTICAL);
+        buttonRow.setPadding(0, AndroidUtilities.dp(20), 0, 0);
+
+        final AlertDialog[] holder = new AlertDialog[1];
+        android.widget.TextView cancelBtn = makeDialogButton("Cancel", 0xFF0369A1, roundedBox(0xFFFFFFFF, 0xFF7DD3FC, 12, 1));
+        cancelBtn.setOnClickListener(v -> { if (holder[0] != null) holder[0].dismiss(); });
+        android.widget.TextView saveBtn = makeDialogButton("Save", 0xFFFFFFFF, gradientBox(0xFF38BDF8, 0xFF0284C7, 12));
+        saveBtn.setOnClickListener(v -> {
+            String text = et.getText().toString().trim();
+            if (text.isEmpty()) {
+                et.setError("Write a message first");
+                return;
+            }
+            cfg.setAutoReplyText(text);
+            cfg.setAutoReplyCooldownHours(selectedHours[0]);
+            if (holder[0] != null) holder[0].dismiss();
+            if (fragment != null) {
+                BulletinFactory.of(fragment).createSimpleBulletin(R.raw.done, "Auto-reply saved").show();
+            }
+        });
+        android.widget.LinearLayout.LayoutParams cancelLp = new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cancelLp.rightMargin = AndroidUtilities.dp(10);
+        buttonRow.addView(cancelBtn, cancelLp);
+        buttonRow.addView(saveBtn, new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(buttonRow, matchWrap());
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setView(root);
+        holder[0] = builder.show();
+    }
+
+    private void refreshCooldownChips(android.widget.TextView[] chips, int[] options, int selected) {
+        for (int i = 0; i < chips.length; i++) {
+            boolean on = options[i] == selected;
+            chips[i].setTextColor(on ? 0xFFFFFFFF : 0xFF0369A1);
+            chips[i].setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
+            chips[i].setBackground(on
+                    ? gradientBox(0xFF38BDF8, 0xFF0284C7, 12)
+                    : roundedBox(0xFFE0F2FE, 0xFF7DD3FC, 12, 1));
+        }
+    }
+
+    private android.widget.TextView makeDialogButton(String label, int textColor, android.graphics.drawable.Drawable background) {
+        android.widget.TextView button = new android.widget.TextView(context);
+        button.setText(label);
+        button.setTextSize(15);
+        button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        button.setTextColor(textColor);
+        button.setGravity(android.view.Gravity.CENTER);
+        button.setPadding(AndroidUtilities.dp(22), AndroidUtilities.dp(10), AndroidUtilities.dp(22), AndroidUtilities.dp(10));
+        button.setBackground(background);
+        return button;
+    }
+
+    private android.graphics.drawable.GradientDrawable roundedBox(int fill, int stroke, int radiusDp, int strokeDp) {
+        android.graphics.drawable.GradientDrawable box = new android.graphics.drawable.GradientDrawable();
+        box.setColor(fill);
+        box.setCornerRadius(AndroidUtilities.dp(radiusDp));
+        box.setStroke(AndroidUtilities.dp(strokeDp), stroke);
+        return box;
+    }
+
+    private android.graphics.drawable.GradientDrawable gradientBox(int startColor, int endColor, int radiusDp) {
+        android.graphics.drawable.GradientDrawable box = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT, new int[]{startColor, endColor});
+        box.setCornerRadius(AndroidUtilities.dp(radiusDp));
+        return box;
+    }
+
+    private android.widget.LinearLayout.LayoutParams matchWrap() {
+        return new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
     }
 
     @Override
@@ -225,23 +616,50 @@ public class FeatureListAdapter extends RecyclerView.Adapter<FeatureListViewHold
         return features.size();
     }
 
-    public static class FeatureItem {
-        public String title;
-        public String description;
-        public int number;
-        public int accentColor;
-        public int iconRes;
+    private void showFeatureDetailsDialog(FeatureItem item, int displayNumber) {
+        if (context == null) return;
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setTitle(item.getCatchyTitle(currentLang));
+        String availability = isImplementationPending(item)
+                ? (currentLang == LANG_BN ? "\n\nএই ফিচারটি এখনো কার্যকর নয়। নেটিভ বাস্তবায়ন ও পরীক্ষা শেষ না হওয়া পর্যন্ত এটি চা��ু করা যাবে না।"
+                : (currentLang == LANG_AR ? "\n\nهذه الميزة غير نشطة بعد. لن يتم تفعيلها قبل اكتمال التنفيذ والاختبار."
+                : "\n\nNot available yet. It will remain inactive until native implementation and testing are complete."))
+                : "";
+        builder.setMessage(item.getDesc(currentLang) + availability + "\n\n" +
+                "Feature #" + displayNumber + " • NayaGram Exclusive");
+        builder.setPositiveButton("OK", null);
+        builder.show();
+    }
 
-        public FeatureItem(String title, String description, int number, int accentColor, int iconRes) {
-            this.title = title;
-            this.description = description;
+    /**
+     * FeatureItem model used by FeatureListViewHolder.
+     */
+    public static class FeatureItem {
+        public final int number;
+        public final int accentColor;
+        public final int numberBadgeColor;
+        public final int iconRes;
+        private final String[] titles;
+        private final String[] descs;
+
+        public FeatureItem(int number, int accentColor, int numberBadgeColor, int iconRes,
+                           String[] titles, String[] descs) {
             this.number = number;
             this.accentColor = accentColor;
+            this.numberBadgeColor = numberBadgeColor;
             this.iconRes = iconRes;
+            this.titles = titles;
+            this.descs = descs;
         }
 
-        public FeatureItem(String title, String description, int number, int accentColor) {
-            this(title, description, number, accentColor, 0);
+        public String getCatchyTitle(int lang) {
+            if (lang >= 0 && lang < titles.length) return titles[lang];
+            return titles[0];
+        }
+
+        public String getDesc(int lang) {
+            if (lang >= 0 && lang < descs.length) return descs[lang];
+            return descs[0];
         }
     }
 }

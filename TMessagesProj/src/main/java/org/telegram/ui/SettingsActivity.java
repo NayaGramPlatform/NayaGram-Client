@@ -1,10 +1,14 @@
 package org.telegram.ui;
 
+import org.nayagram.platform.ui.NayaAboutActivity;
+
 import static org.telegram.messenger.AndroidUtilities.dp;
 import static org.telegram.messenger.AndroidUtilities.lerp;
 import static org.telegram.messenger.AndroidUtilities.replaceSingleTag;
 import static org.telegram.messenger.LocaleController.formatString;
 import static org.telegram.messenger.LocaleController.getString;
+import static org.telegram.ui.PremiumPreviewFragment.applyNewSpan;
+import static org.telegram.ui.PremiumPreviewFragment.applyNewSpanTimed;
 import static org.telegram.ui.Stars.StarGiftSheet.replaceUnderstood;
 
 import android.animation.Animator;
@@ -67,8 +71,6 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.common.collect.Lists;
-
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -86,10 +88,16 @@ import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaDataController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.MessagesStorage;
+import org.telegram.messenger.NotificationsController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.SharedPrefsHelper;
+import org.nayagram.platform.security.NGSafetyActivity;
+import org.telegram.ui.Cells.TextCell;
+import org.telegram.ui.Wallet.GramWallet;
+import org.telegram.ui.Wallet.WalletActivity;
+import org.telegram.utils.settings.SharedSettings;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.UserObject;
 import org.telegram.messenger.browser.Browser;
@@ -99,6 +107,7 @@ import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.ActionBarMenu;
 import org.telegram.ui.ActionBar.ActionBarMenuItem;
 import org.telegram.ui.ActionBar.AlertDialog;
+import org.telegram.ui.Components.Switch;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.INavigationLayout;
 import org.telegram.ui.ActionBar.SimpleTextView;
@@ -148,9 +157,7 @@ import org.telegram.ui.bots.SetupEmojiStatusSheet;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -218,6 +225,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         getNotificationCenter().addObserver(this, NotificationCenter.updateInterfaces);
         getNotificationCenter().addObserver(this, NotificationCenter.starBalanceUpdated);
         getNotificationCenter().addObserver(this, NotificationCenter.newSuggestionsAvailable);
+        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.nayagramHiddenAccountsChanged);
 
         if (arguments != null) {
             hasMainTabs = arguments.getBoolean("hasMainTabs", false);
@@ -511,6 +519,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         getNotificationCenter().removeObserver(this, NotificationCenter.updateInterfaces);
         getNotificationCenter().removeObserver(this, NotificationCenter.starBalanceUpdated);
         getNotificationCenter().removeObserver(this, NotificationCenter.newSuggestionsAvailable);
+        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.nayagramHiddenAccountsChanged);
     }
 
     @Override
@@ -522,7 +531,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             }
         } else if (id == NotificationCenter.updateInterfaces) {
             setInfo();
-        } else if (id == NotificationCenter.newSuggestionsAvailable) {
+        } else if (id == NotificationCenter.newSuggestionsAvailable || id == NotificationCenter.nayagramHiddenAccountsChanged) {
             if (listView != null) {
                 listView.adapter.update(true);
             }
@@ -542,7 +551,11 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         titleView.setText(UserObject.getUserName(user));
         final StringBuilder sb = new StringBuilder();
         if (user != null) {
-            sb.append(PhoneFormat.getInstance().format("+" + user.phone));
+            String formattedPhone = PhoneFormat.getInstance().format("+" + user.phone);
+            if (org.nayagram.platform.NayaConfig.getInstance().isHidePhoneNumberEnabled()) {
+                formattedPhone = org.nayagram.platform.NayaConfig.formatPhoneNumberPrivacy(formattedPhone, true);
+            }
+            sb.append(formattedPhone);
         }
         final String username = UserObject.getPublicUsername(user);
         if (username != null) {
@@ -629,9 +642,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
 
         items.add(UItem.asCustomShadow(topView, 200 - 12));
 
+        // Dedicated shortcut to NayaGram's local security features, placed at the top of Settings.
+        items.add(SettingCell.Factory.of(111, 0xFF00D4FF, 0xFF7C4DFF, R.drawable.ic_nayagram_authenticator, getString(R.string.NGProtectionTitle), getString(R.string.NGProtectionTagline)));
+
         accountNumbers.clear();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            if (UserConfig.getInstance(a).isClientActivated() && currentAccount != a) {
+            if (UserConfig.getInstance(a).isClientActivated() && currentAccount != a && !org.nayagram.platform.security.NGHiddenAccounts.isHidden(a)) {
                 accountNumbers.add(a);
             }
         }
@@ -686,63 +702,65 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             items.add(UItem.asShadow(null));
         }
 
-        if (accountNumbers.size() > 0) {
+        final boolean canAddAccount = UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_COUNT;
+        final boolean showAddAccount = canAddAccount || org.nayagram.platform.security.NGHiddenAccounts.hasCode();
+        if (accountNumbers.size() > 0 || showAddAccount) {
             items.add(UItem.asHeader(getString(R.string.SettingsAccounts)));
             for (int i = 0; i < accountNumbers.size(); ++i) {
                 items.add(AccountCell.Factory.of(i, accountNumbers.get(i)));
             }
+            if (showAddAccount) {
+                items.add(SettingCell.Factory.of(200, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.outline_add_account, getString(R.string.AddAccount)));
+            }
             items.add(UItem.asShadow(null));
         }
 
-        items.add(UItem.asHeader("NayaGram"));
-        items.add(SettingCell.Factory.of(100, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_features, "𝐍𝐆 𝐅𝐞𝐚𝐭𝐮𝐫𝐞", "All custom stealth, stories, privacy & tools", "\u2728"));
-        long currentClientUserId = UserConfig.getInstance(currentAccount).getClientUserId();
-        if (BuildVars.isNgStudioAllowed(currentClientUserId)) {
-            items.add(SettingCell.Factory.of(101, IconBackgroundColors.BLUE_DEEP.top, IconBackgroundColors.BLUE_DEEP.bottom, R.drawable.settings_devices, "NG Control", "Developer & Management", "00"));
-        }
-        items.add(UItem.asShadow(createNayaCopyrightSpan()));
+        // 2. Account item (Number, Username, Bio)
 
         items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_account, getString(R.string.SettingsAccount), getString(R.string.SettingsAccountInfo)));
-        items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
+
+        // Privacy & Security moved higher up right above NayaGram Settings
         items.add(SettingCell.Factory.of(3, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.SettingsPrivacySecurity), getString(R.string.SettingsPrivacySecurityInfo)));
+
+        // 3. NayaGram section placed right BELOW Privacy & Security
+        items.add(UItem.asHeader("NayaGram"));
+        items.add(SettingCell.Factory.of(100, 0xFF7E57C2, 0xFF5E35B1, R.drawable.ic_naya_settings, "NayaGram Settings", "Features, auto answer, security & tools", ""));
+        items.add(SettingCell.Factory.of(108, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_devices, "Infonity AI 💎", "Official AI Assistant @InfonityAI_Bot", ""));
+        items.add(SettingCell.Factory.of(112, IconBackgroundColors.PURPLE.top, IconBackgroundColors.CYAN.bottom, R.drawable.msg_admins, "NG Admin 🛡️", "Official Leadership & Admins", ""));
+        items.add(SettingCell.Factory.of(106, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, "App Theme", "Customize wallpaper, colors & bubbles", ""));
+        items.add(SettingCell.Factory.of(104, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_data, "App Cache", "Free storage & clean cache (1-Tap)", ""));
+        items.add(SettingCell.Factory.of(105, IconBackgroundColors.ORANGE_DEEP.top, IconBackgroundColors.ORANGE_DEEP.bottom, R.drawable.settings_folders, "Chat finder", "Find groups, channels & bots", ""));
+        items.add(SettingCell.Factory.of(110, 0xFF1FB0A5, 0xFF12968C, R.drawable.ic_naya_info, "About NayaGram", "v" + getInstalledAppVersionName() + " • Platform & Info", ""));
+        items.add(UItem.asShadow(createNayaCopyrightSpan()));
+
+        items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
         items.add(SettingCell.Factory.of(5, IconBackgroundColors.RED.top, IconBackgroundColors.RED.bottom, R.drawable.settings_sounds, getString(R.string.SettingsNotifications), getString(R.string.SettingsNotificationsInfo)));
         items.add(SettingCell.Factory.of(6, IconBackgroundColors.BLUE_DEEP.top, IconBackgroundColors.BLUE_DEEP.bottom, R.drawable.settings_data, getString(R.string.SettingsData), getString(R.string.SettingsDataInfo)));
         items.add(SettingCell.Factory.of(7, IconBackgroundColors.BLUE_ALT.top, IconBackgroundColors.BLUE_ALT.bottom, R.drawable.settings_folders, getString(R.string.SettingsFolders), getString(R.string.SettingsFoldersInfo)));
         items.add(SettingCell.Factory.of(8, IconBackgroundColors.CYAN.top, IconBackgroundColors.CYAN.bottom, R.drawable.settings_devices, getString(R.string.SettingsDevices), getString(R.string.SettingsDevicesInfo)));
         items.add(SettingCell.Factory.of(9, IconBackgroundColors.ORANGE_DEEP.top, IconBackgroundColors.ORANGE_DEEP.bottom, R.drawable.settings_power, getString(R.string.SettingsPowerSaving), getString(R.string.SettingsPowerSavingInfo)));
-        items.add(SettingCell.Factory.of(10, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_language, getString(R.string.SettingsLanguage), LocaleController.getCurrentLanguageName()));
+        items.add(SettingCell.Factory.of(10, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_language, getString(R.string.SettingsLanguage), getString(R.string.SettingsLanguageInfo), LocaleController.getCurrentLanguageName()));
 
         items.add(UItem.asShadow(null));
 
+
         if (!getMessagesController().premiumFeaturesBlocked()) {
-            items.add(SettingCell.Factory.of(11, 0xFFB659FF, 0xFF617CFF, R.drawable.settings_premium, getString(R.string.TelegramPremium)));
+            items.add(SettingCell.Factory.of(11, 0xFFB659FF, 0xFF617CFF, R.drawable.settings_premium, getString(R.string.NayaGramPremium)));
         }
         if (getMessagesController().starsPurchaseAvailable()) {
             StarsController c = StarsController.getInstance(currentAccount);
             long balance = c.getBalance().amount;
-            items.add(SettingCell.Factory.of(12, 0xFFEFA612, 0xFFE77512, R.drawable.settings_stars, getString(R.string.TelegramStars), null, c.balanceAvailable() && balance > 0 ? StarsIntroActivity.formatStarsAmount(c.getBalance(), 0.85f, ' ') : ""));
+            items.add(SettingCell.Factory.of(12, 0xFFEFA612, 0xFFE77512, R.drawable.settings_stars, getString(R.string.NayaGramStars), null, c.balanceAvailable() && balance > 0 ? StarsIntroActivity.formatStarsAmount(c.getBalance(), 0.85f, ' ') : ""));
         }
         StarsController.getInstance(currentAccount, true).getBalance();
         if (ApplicationLoader.isBetaBuild() || ApplicationLoader.isStandaloneBuild() || ApplicationLoader.isHuaweiStoreBuild() || (StarsController.getInstance(currentAccount, true).balanceAvailable() && (StarsController.getInstance(currentAccount, true).hasTransactions() || StarsController.getInstance(currentAccount, true).getBalance().positive()))) {
-            StarsController c = StarsController.getTonInstance(currentAccount);
-            long balance = c.getBalance().amount;
-            items.add(SettingCell.Factory.of(13, 0xFF1BA4ED, 0xFF1488E1, R.drawable.settings_gram_24, getString(R.string.MyTON), null, c.balanceAvailable() && balance > 0 ? StarsIntroActivity.formatStarsAmount(c.getBalance(), 0.85f, ' ') : ""));
-        }
-
-        TLRPC.TL_attachMenuBots menuBots = MediaDataController.getInstance(UserConfig.selectedAccount).getAttachMenuBots();
-        if (menuBots != null && menuBots.bots != null && !menuBots.bots.isEmpty()) {
-            for (TLRPC.TL_attachMenuBot attachMenuBot : menuBots.bots) {
-                final long WALLET_BOT_ID = 1985737506L;
-                if (attachMenuBot.show_in_side_menu && attachMenuBot.bot_id == WALLET_BOT_ID) {
-                    UItem item = SettingCell.Factory.ofBot(attachMenuBot, 0xFF1BA4ED, 0xFF1488E1, R.drawable.settings_wallet);
-                    item.object = attachMenuBot;
-                    items.add(item);
-                }
-            }
+            final StarsController c = StarsController.getTonInstance(currentAccount);
+            final long balance = c.getBalance().amount;
+            items.add(SettingCell.Factory.of(13, 0xFF1BA4ED, 0xFF1488E1, R.drawable.filled_gram_earnings, getString(R.string.GramEarnings), null, c.balanceAvailable() && balance > 0 ? StarsIntroActivity.formatStarsAmount(c.getBalance(), 0.85f, ' ') : ""));
         }
 
         if (!getMessagesController().premiumFeaturesBlocked()) {
-            items.add(SettingCell.Factory.of(15, 0xFFF45255, 0xFFDF3955, R.drawable.settings_business, getString(R.string.TelegramBusiness)));
+            items.add(SettingCell.Factory.of(15, 0xFFF45255, 0xFFDF3955, R.drawable.settings_business, getString(R.string.NayaGramBusiness)));
         }
         if (!getMessagesController().premiumPurchaseBlocked()) {
             items.add(SettingCell.Factory.of(16, 0xFFF38B31, 0xFFE26314, R.drawable.settings_gift, getString(R.string.SendAGift)));
@@ -752,9 +770,16 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
 
         items.add(UItem.asHeader(getString(R.string.SettingsHelp)));
         items.add(SettingCell.Factory.of(17, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_ask, getString(R.string.AskAQuestion)));
-        items.add(SettingCell.Factory.of(18, IconBackgroundColors.BLUE_LIGHT.top, IconBackgroundColors.BLUE_LIGHT.bottom, R.drawable.settings_faq, getString(R.string.TelegramFAQ)));
-        items.add(SettingCell.Factory.of(23, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_features, getString(R.string.TelegramFeatures)));
+        items.add(SettingCell.Factory.of(18, IconBackgroundColors.BLUE_LIGHT.top, IconBackgroundColors.BLUE_LIGHT.bottom, R.drawable.settings_faq, getString(R.string.NayaGramFAQ)));
+        items.add(SettingCell.Factory.of(23, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_features, getString(R.string.NayaGramFeatures)));
         items.add(SettingCell.Factory.of(19, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_policy, getString(R.string.PrivacyPolicy)));
+
+        if (SharedSettings.experimentalSettingsAllowed.get()) {
+            items.add(UItem.asShadow(null));
+            items.add(UItem.asHeader("Experimental"));
+            items.add(SettingCell.Factory.of(24, 0xFFF45255, 0xFFDF3955, 0, getString(R.string.RoundVideoSettings)));
+            items.add(SettingCell.Factory.of(26, 0xFF55CA47, 0xFF27B434, 0, getString(R.string.AudioRecorderSettings)));
+        }
 
         if (BuildVars.LOGS_ENABLED || BuildVars.DEBUG_PRIVATE_VERSION) {
             items.add(UItem.asShadow(null));
@@ -823,17 +848,41 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             return;
         }
         switch (item.id) {
+            case 200: {
+                int freeAccount = -1;
+                for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                    if (!UserConfig.getInstance(a).isClientActivated()) {
+                        freeAccount = a;
+                        break;
+                    }
+                }
+                if (freeAccount >= 0) {
+                    final int targetAccount = freeAccount;
+                    presentFragment(new LoginActivity(targetAccount));
+                } else {
+                    org.telegram.ui.Components.BulletinFactory.of(this).createSimpleBulletin(R.raw.error, "Maximum 15 accounts limit reached").show();
+                }
+                break;
+            }
+            case 111:
+                presentSettingFragment(new NGSafetyActivity());
+                break;
             case 100:
                 presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_FEATURES_HUB));
                 break;
+            case 108:
+                MessagesController.getInstance(currentAccount).openByUserName("InfonityAI_Bot", this, 1);
+                break;
+            case 112: {
+                presentFragment(new org.nayagram.platform.ui.NGAdminActivity());
+                break;
+            }
+            case 110: {
+                presentFragment(new NayaAboutActivity());
+                break;
+            }
             case 101:
                 presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_STUDIO));
-                break;
-            case 102:
-                presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_GHOST_MODE));
-                break;
-            case 103:
-                presentSettingFragment(new NGSettingsActivity(NGSettingsActivity.TYPE_ANTI_DELETE));
                 break;
             case 104:
                 presentSettingFragment(new CacheControlActivity());
@@ -884,6 +933,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             case 13:
                 presentSettingFragment(new TONIntroActivity());
                 break;
+            case 25:
+                presentSettingFragment(new WalletActivity());
+                break;
             case 15:
                 presentSettingFragment(new PremiumPreviewFragment(PremiumPreviewFragment.FEATURES_BUSINESS, "settings"));
                 break;
@@ -895,7 +947,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 showDialog(AlertsCreator.createSupportAlert(this, resourceProvider));
                 break;
             case 18:
-                Browser.openUrl(getParentActivity(), LocaleController.getString(R.string.TelegramFaqUrl));
+                Browser.openUrl(getParentActivity(), LocaleController.getString(R.string.NayaGramFaqUrl));
                 break;
             case 19:
                 Browser.openUrl(getParentActivity(), LocaleController.getString(R.string.PrivacyPolicyUrl));
@@ -914,14 +966,43 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 if (MessagesController.getInstance(currentAccount).isFrozen()) {
                     AccountFrozenAlert.show(currentAccount);
                 } else {
-                    Browser.openUrl(getContext(), LocaleController.getString(R.string.TelegramFeaturesUrl));
+                    String tipsUrl = LocaleController.getString(R.string.NayaGramFeaturesUrl);
+                    if (tipsUrl == null || tipsUrl.length() == 0) {
+                        tipsUrl = "https://t.me/TelegramTips";
+                    }
+                    try {
+                        Browser.openUrl(getContext(), tipsUrl);
+                    } catch (Throwable e1) {
+                        try {
+                            Browser.openUrl(getContext(), "https://t.me/TelegramTips");
+                        } catch (Throwable e2) {
+                            MessagesController.getInstance(currentAccount).openByUserName("TelegramTips", SettingsActivity.this, 1);
+                        }
+                    }
                 }
+                break;
+            }
+            case 24: {
+                presentFragment(new RoundVideoSettingsActivity());
+                break;
+            }
+            case 26: {
+                presentFragment(new AudioRecorderSettingsActivity());
                 break;
             }
         }
     }
 
     private boolean onLongClick(UItem item, View view, int position, float x, float y) {
+        if (item.id == 200) {
+            return org.nayagram.platform.security.NGHiddenAccounts.askUnlock(this);
+        }
+        if (item.instanceOf(AccountCell.Factory.class)) {
+            final ItemOptions o = ItemOptions.makeOptions(this, view);
+            org.nayagram.platform.security.NGHiddenAccounts.addHideOption(o, this, item.intValue);
+            o.setScrimViewBackground(listView.getClipBackground(view)).show();
+            return true;
+        }
         if (item.object instanceof TLRPC.TL_attachMenuBot) {
             TLRPC.TL_attachMenuBot attachMenuBot = (TLRPC.TL_attachMenuBot) item.object;
             BotWebViewSheet.deleteBot(currentAccount, attachMenuBot.bot_id, () -> listView.adapter.update(true));
@@ -986,6 +1067,18 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         return ssb;
     }
 
+    private String getInstalledAppVersionName() {
+        try {
+            PackageInfo pInfo = ApplicationLoader.applicationContext.getPackageManager().getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
+            if (pInfo.versionName != null && !pInfo.versionName.isEmpty()) {
+                return pInfo.versionName;
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        return "4.26.63 NG";
+    }
+
     public String getVersionName() {
         try {
             PackageInfo pInfo = ApplicationLoader.applicationContext.getPackageManager().getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
@@ -1006,7 +1099,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                     break;
             }
             int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
-            String nayaGramInfo = "NayaGram for Android v1.0.0 (1)";
+            String nayaGramInfo = "NayaGram for Android v" + getInstalledAppVersionName() + " (" + code + ")";
             String copyrightLine = "© " + currentYear + " 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦. All rights reserved.\nBuilt with ❤️ in Bangladesh 🇧🇩";
             return nayaGramInfo + "\n" + copyrightLine + "\n" + abi;
         } catch (Exception e) {
@@ -1043,7 +1136,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         private BackupImageView avatarView;
         private SimpleTextView textView;
         private TextView counterView;
-        private ImageView arrowView;
+        public Switch switchView;
+        private int account;
 
         private final AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable botDrawable;
         private final AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable emojiStatusDrawable;
@@ -1087,27 +1181,25 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             counterView.setTextColor(Theme.getColor(Theme.key_featuredStickers_buttonText, resourcesProvider));
             counterView.setBackground(Theme.createRoundRectDrawable(dp(10), Theme.getColor(Theme.key_featuredStickers_addButton, resourcesProvider)));
 
-            arrowView = new ImageView(context);
-            arrowView.setImageResource(R.drawable.msg_arrowright);
-            arrowView.setScaleType(ImageView.ScaleType.CENTER);
-            arrowView.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteGrayIcon, resourcesProvider), PorterDuff.Mode.SRC_IN));
+            switchView = new Switch(context, resourcesProvider);
+            switchView.setColors(Theme.key_switchTrack, Theme.key_switchTrackChecked, Theme.key_windowBackgroundWhite, Theme.key_windowBackgroundWhite);
+            switchView.setScaleX(0.85f);
+            switchView.setScaleY(0.85f);
+            switchView.setClickable(true);
+            switchView.setOnClickListener(v -> toggleNotifications());
 
             if (LocaleController.isRTL) {
                 textView.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-                arrowView.setScaleX(-1);
-
-                addView(arrowView, LayoutHelper.createLinear(24, 24, 0, Gravity.CENTER_VERTICAL | Gravity.LEFT, 12, 0, 0, 0));
-                addView(counterView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 20, 0, Gravity.CENTER_VERTICAL, 0, 0, 0, 0));
+                addView(switchView, LayoutHelper.createLinear(37, LayoutHelper.MATCH_PARENT, 0, Gravity.CENTER_VERTICAL | Gravity.LEFT, 15, 0, 0, 0));
+                addView(counterView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 20, 0, Gravity.CENTER_VERTICAL, 8, 0, 0, 0));
                 addView(textView, LayoutHelper.createLinear(0, LayoutHelper.MATCH_PARENT, 1f, Gravity.FILL, 18, 0, 0, 0));
                 addView(avatarView, LayoutHelper.createLinear(28, 28, Gravity.CENTER_VERTICAL | Gravity.RIGHT, 18, 0, 18, 0));
-
             } else {
                 textView.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
-
                 addView(avatarView, LayoutHelper.createLinear(28, 28, Gravity.CENTER_VERTICAL | Gravity.LEFT, 18, 0, 18, 0));
                 addView(textView, LayoutHelper.createLinear(0, LayoutHelper.MATCH_PARENT, 1f, Gravity.FILL, 0, 0, 18, 0));
-                addView(counterView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 20, 0, Gravity.CENTER_VERTICAL, 0, 0, 0, 0));
-                addView(arrowView, LayoutHelper.createLinear(24, 24, 0, Gravity.CENTER_VERTICAL | Gravity.RIGHT, 0, 0, 12, 0));
+                addView(counterView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 20, 0, Gravity.CENTER_VERTICAL, 0, 0, 8, 0));
+                addView(switchView, LayoutHelper.createLinear(37, LayoutHelper.MATCH_PARENT, 0, Gravity.CENTER_VERTICAL | Gravity.RIGHT, 0, 0, 15, 0));
             }
         }
 
@@ -1115,17 +1207,33 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         public void updateColors() {
             textView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
             counterView.setBackground(Theme.createRoundRectDrawable(dp(10), Theme.getColor(Theme.key_featuredStickers_addButton, resourcesProvider)));
-            arrowView.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteGrayIcon, resourcesProvider), PorterDuff.Mode.SRC_IN));
             emojiStatusDrawable.setColor(Theme.getColor(Theme.key_profile_verifiedBackground, resourcesProvider));
         }
 
+        private void toggleNotifications() {
+            final boolean enabled = !NotificationsController.isAccountNotificationsEnabled(account);
+            MessagesController.getGlobalNotificationsSettings().edit()
+                    .putBoolean(NotificationsController.getAccountNotificationsKey(account), enabled)
+                    .apply();
+            switchView.setChecked(enabled, true);
+            if (enabled) {
+                NotificationsController.getInstance(account).showNotifications();
+                if (UserConfig.getInstance(account).isClientActivated()) {
+                    ConnectionsManager.getInstance(account).resumeNetworkMaybe();
+                }
+            } else {
+                NotificationsController.getInstance(account).hideNotifications();
+            }
+        }
+
         public void set(int account) {
+            this.account = account;
             final TLRPC.User user = UserConfig.getInstance(account).getCurrentUser();
 
             avatarDrawable.setInfo(account, user);
             avatarView.getImageReceiver().setCurrentAccount(account);
             avatarView.setForUserOrChat(user, avatarDrawable);
-            textView.setText(UserObject.getUserName(user));
+            textView.setText(org.nayagram.platform.security.NGHiddenAccounts.withHiddenMark(account, UserObject.getUserName(user)));
 
             botDrawable.setCurrentAccount(account);
             emojiStatusDrawable.setCurrentAccount(account);
@@ -1140,7 +1248,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             emojiStatusDrawable.setColor(Theme.getColor(Theme.key_profile_verifiedBackground, resourcesProvider));
             if (emojiStatusId != null) {
                 emojiStatusDrawable.set(emojiStatusId, false);
-            } else if (user != null && user.premium) {
+            } else if (user != null && (user.premium || user.self)) {
                 emojiStatusDrawable.set(getContext().getResources().getDrawable(R.drawable.msg_premium_liststar).mutate(), false);
             } else {
                 emojiStatusDrawable.set((Drawable) null, false);
@@ -1151,6 +1259,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             int counter = MessagesStorage.getInstance(account).getMainUnreadCount();
             counterView.setVisibility(counter > 0 ? View.VISIBLE : View.GONE);
             counterView.setText(LocaleController.formatNumber(counter, ','));
+            switchView.setChecked(NotificationsController.isAccountNotificationsEnabled(account), false);
+            switchView.setVisibility(org.nayagram.platform.security.NGHiddenAccounts.isHidden(account) ? View.GONE : View.VISIBLE);
         }
 
         @Override
@@ -1178,6 +1288,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 final UItem item = UItem.ofFactory(AccountCell.Factory.class);
                 item.id = id;
                 item.intValue = account;
+                item.checked = org.nayagram.platform.security.NGHiddenAccounts.isHidden(account);
                 return item;
             }
 
@@ -1188,7 +1299,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
 
             @Override
             public boolean contentsEquals(UItem a, UItem b) {
-                return a.intValue == b.intValue;
+                return a.intValue == b.intValue && a.checked == b.checked;
             }
         }
     }
@@ -1213,6 +1324,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         private final TextView subtitleView;
         private final TextView valueView;
         private final boolean mini;
+        private boolean hasBackground = true;
 
         public SettingCell(Context context, Theme.ResourcesProvider resourcesProvider) {
             this(context, resourcesProvider, false);
@@ -1262,7 +1374,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
             subtitleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
             valueView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider));
-            iconBackground.setDrawBorder(resourcesProvider != null ? resourcesProvider.isDark() : Theme.isCurrentThemeDark());
+            iconBackground.setDrawBorder(hasBackground && (resourcesProvider != null ? resourcesProvider.isDark() : Theme.isCurrentThemeDark()));
         }
 
         private boolean twoLines;
@@ -1273,6 +1385,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             CharSequence subtitle,
             CharSequence value
         ) {
+            hasBackground = iconColorTop != 0 || iconColorBottom != 0;
             iconLayout.setVisibility(icon != 0 ? View.VISIBLE : View.GONE);
             titleView.setTranslationX(icon == 0 ? dp(2) : 0);
             subtitleView.setTranslationX(icon == 0 ? dp(2) : 0);
@@ -1283,6 +1396,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             subtitleView.setVisibility((twoLines = !TextUtils.isEmpty(subtitle)) ? View.VISIBLE : View.GONE);
             subtitleView.setText(subtitle);
             setValue(value);
+            updateColors();
         }
 
         public void setValue(CharSequence value) {
@@ -1536,6 +1650,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 (SharedConfig.frameMetricsEnabled ? "hide frame metrics" : "show frame metrics"),
                 BuildVars.DEBUG_PRIVATE_VERSION ? (SharedConfig.shadowsInSections ? "disable shadows in settings" : "enable shadows in settings") : null,
                 BuildVars.DEBUG_PRIVATE_VERSION ? (SharedConfig.debugViewMetrics ? "disable debug view metrics" : "enable debug view metrics") : null,
+                (SharedSettings.experimentalSettingsAllowed.get() ? "hide experimental settings" : "show experimental settings")
         };
 
         builder.setItems(items, (dialog, which) -> {
@@ -1845,6 +1960,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             } else if (which == 41) {
                 final SharedPreferences prefs = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
                 prefs.edit().putBoolean("debugViewMetrics", SharedConfig.debugViewMetrics = !SharedConfig.debugViewMetrics).apply();
+            } else if (which == 42) {
+                SharedSettings.experimentalSettingsAllowed.toggle();
+                listView.adapter.update(true);
             }
         });
         builder.setNegativeButton(getString(R.string.Cancel), null);

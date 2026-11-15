@@ -3421,6 +3421,10 @@ public class Theme {
     public static final int key_telegram_color = colorsCount++;
     public static final int key_telegram_color_text = colorsCount++;
 
+    public static final int key_wallet_comment = colorsCount++;
+    public static final int key_wallet_out_commentBorder = colorsCount++;
+    public static final int key_wallet_inputCurrency = colorsCount++;
+
     public static final String key_drawable_botInline = "drawableBotInline";
     public static final String key_drawable_botLink = "drawableBotLink";
     public static final String key_drawable_botWebView = "drawableBotWebView";
@@ -3634,7 +3638,10 @@ public class Theme {
         fallbackKeys.put(key_chat_inPollWrongAnswer, key_chat_attachAudioBackground);
         fallbackKeys.put(key_chat_outPollWrongAnswer, key_chat_attachAudioBackground);
         fallbackKeys.put(key_chat_editMediaButton, key_dialogFloatingButton);
+        fallbackKeys.put(key_dialogRoundCheckBox, key_checkbox);
+        fallbackKeys.put(key_dialogRoundCheckBoxCheck, key_checkboxCheck);
         fallbackKeys.put(key_chat_attachCheckBoxBackground, key_dialogRoundCheckBox);
+        fallbackKeys.put(key_chat_attachCheckBoxCheck, key_checkboxCheck);
         fallbackKeys.put(key_pollCreateIcons, key_windowBackgroundWhiteGrayIcon);
 
         fallbackKeys.put(key_profile_tabText, key_windowBackgroundWhiteGrayText);
@@ -3711,7 +3718,9 @@ public class Theme {
         fallbackKeys.put(key_telegram_color, Theme.key_chat_messagePanelSend);
         fallbackKeys.put(key_telegram_color_text, Theme.key_windowBackgroundWhiteBlueText4);
 
-
+        fallbackKeys.put(key_wallet_comment, Theme.key_dialogBackgroundGray);
+        fallbackKeys.put(key_wallet_out_commentBorder, Theme.key_divider);
+        fallbackKeys.put(key_wallet_inputCurrency, Theme.key_color_green);
 
 
         // fallbackKeys.put(key_chat_msgIvButtonDefaultIn, );
@@ -8966,8 +8975,15 @@ public class Theme {
     }
 
     public static int getColor(int key, ResourcesProvider provider) {
+        if ((key == key_chats_verifiedBackground || key == key_profile_verifiedBackground) && isCurrentThemeDark()) {
+            return 0xff9333ea; // Purple radiance in dark mode
+        }
         if (provider != null) {
-            return provider.getColor(key);
+            int col = provider.getColor(key);
+            if ((key == key_chats_verifiedBackground || key == key_profile_verifiedBackground) && isCurrentThemeDark()) {
+                return 0xff9333ea;
+            }
+            return col;
         }
         return getColor(key);
     }
@@ -8985,6 +9001,9 @@ public class Theme {
     }
 
     public static int getColor(int key, boolean[] isDefault, boolean ignoreAnimation) {
+        if ((key == key_chats_verifiedBackground || key == key_profile_verifiedBackground) && isCurrentThemeDark()) {
+            return 0xff9333ea; // Purple radiance in dark mode
+        }
         if (!ignoreAnimation && animatingColors != null) {
             int index = animatingColors.indexOfKey(key);
             if (index >= 0) {

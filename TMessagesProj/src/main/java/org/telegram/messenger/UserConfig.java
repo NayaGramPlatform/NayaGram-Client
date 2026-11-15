@@ -24,8 +24,8 @@ import java.util.Arrays;
 public class UserConfig extends BaseController {
 
     public static int selectedAccount;
-    public final static int MAX_ACCOUNT_DEFAULT_COUNT = 3;
-    public final static int MAX_ACCOUNT_COUNT = 4;
+    public final static int MAX_ACCOUNT_COUNT = 15;
+    public final static int MAX_ACCOUNT_DEFAULT_COUNT = MAX_ACCOUNT_COUNT;
 
     private final Object sync = new Object();
     private volatile boolean configLoaded;
@@ -254,6 +254,8 @@ public class UserConfig extends BaseController {
 
     public TLRPC.User getCurrentUser() {
         synchronized (sync) {
+            // Keep the server-provided verification flag intact. A local UI preference
+            // must never manufacture or erase Telegram's authoritative verified status.
             return currentUser;
         }
     }
@@ -460,6 +462,7 @@ public class UserConfig extends BaseController {
 
     public void clearConfig() {
         getPreferences().edit().clear().apply();
+        org.nayagram.platform.auth.NGBotSessionManager.cleanupAccount(currentAccount);
 
         sharingMyLocationUntil = 0;
         lastMyLocationShareTime = 0;
@@ -572,15 +575,8 @@ public class UserConfig extends BaseController {
     }
 
     public boolean isPremium() {
-    if (false /* NayaGramGeneralPreferences.isPremiumFreeEnabled() */) {
-        return true;
+        return currentUser != null && currentUser.premium;
     }
-    TLRPC.User user = currentUser;
-    if (user == null) {
-        return false;
-    }
-    return user.premium;
-}
 
     public Long getEmojiStatus() {
         return UserObject.getEmojiStatusDocumentId(currentUser);

@@ -89,6 +89,13 @@ public class AnimatedEmojiDrawable extends Drawable {
     public static final int CACHE_TYPE_NOANIMATE_FOLDER = 26;
 
     private static SparseArray<LongSparseArray<AnimatedEmojiDrawable>> globalEmojiCache;
+
+    public static void dropGlobalEmojiCache() {
+        if (globalEmojiCache != null) {
+            globalEmojiCache.clear();
+        }
+    }
+
     private static boolean LOG_MEMORY_LEAK = false;
 
     @NonNull
@@ -1484,12 +1491,12 @@ public class AnimatedEmojiDrawable extends Drawable {
 
         @Override
         public int getIntrinsicWidth() {
-            return size;
+            return (drawables[0] != null || drawables[1] != null) ? size : 0;
         }
 
         @Override
         public int getIntrinsicHeight() {
-            return size;
+            return (drawables[0] != null || drawables[1] != null) ? size : 0;
         }
 
         @Override

@@ -1,540 +1,795 @@
 package org.telegram.ui;
 
-import static org.telegram.messenger.AndroidUtilities.dp;
+import org.telegram.messenger.MessagesController;
+import org.telegram.messenger.UserConfig;
+import org.telegram.tgnet.TLRPC;
+
+import org.telegram.messenger.NotificationCenter;
+
+import org.nayagram.platform.ui.NayaAboutActivity;
 
 import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Typeface;
-import android.text.SpannableStringBuilder;
-import android.text.Spanned;
-import android.text.style.AlignmentSpan;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.StyleSpan;
+import android.text.TextUtils;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.nayagram.platform.AntiDeleteManager;
-import org.nayagram.platform.GhostModeManager;
 import org.nayagram.platform.NayaConfig;
 import org.telegram.messenger.AndroidUtilities;
-import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
-import org.telegram.messenger.UserConfig;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.ActionBarMenu;
 import org.telegram.ui.ActionBar.ActionBarMenuItem;
+import org.nayagram.platform.features.NayaFeaturesActivity;
+import android.content.Intent;
+import android.net.Uri;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.HeaderCell;
-import org.telegram.ui.Cells.TextCheckCell;
-import org.telegram.ui.Cells.TextDetailSettingsCell;
 import org.telegram.ui.Cells.TextInfoPrivacyCell;
 import org.telegram.ui.Cells.TextSettingsCell;
 import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
-
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Locale;
+import org.telegram.ui.Components.Switch;
 
 /**
- * NGSettingsActivity - Dedicated NayaGram Feature Hub & Settings
- * Inspired by Nekogram, Cherrygram, and Novagram.
+ * NGSettingsActivity - Premium NayaGram Settings Hub.
+ * Features modern Telegram iOS-style colored icon badges with clean English layout.
  */
 public class NGSettingsActivity extends BaseFragment {
 
     public static final int TYPE_FEATURES_HUB = 0;
-    public static final int TYPE_GHOST_MODE = 1;
     public static final int TYPE_STUDIO = 2;
-    public static final int TYPE_ANTI_DELETE = 3;
 
-    private static final int ITEM_SEARCH = 1;
-    private static final int ITEM_MORE = 2;
-    private static final int SUB_ITEM_RESET = 3;
-
-    private final int currentType;
-    private ListAdapter listAdapter;
-    private RecyclerListView listView;
-    private ActionBarMenuItem searchItem;
-
-    private boolean isSearching;
-    private String searchQuery = "";
-    private final ArrayList<SearchItem> searchResults = new ArrayList<>();
-    private final ArrayList<SearchItem> allFeatures = new ArrayList<>();
-
-    private int rowCount;
-
-    // Feature Hub Rows
-    private int hubHeaderStories;
-    private int hubRowAnonymousStories;
-    private int hubRowStorySaver;
-    private int hubHeaderStealth;
-    private int hubRowGhostMaster;
-    private int hubRowHideTyping;
-    private int hubRowHideOnline;
-    private int hubRowHideReadReceipts;
-    private int hubHeaderMessaging;
-    private int hubRowForwardNoQuote;
-    private int hubRowAntiDelete;
-    private int hubHeaderProtection;
-    private int hubRowConfirmActions;
-    private int hubRowShowIdDc;
-    private int hubRowResetDefaults;
-    private int hubHeaderStudio;
-    private int hubRowStudio;
-    private int hubFooterCopyrightRow;
-
-    // Standalone mode rows
-    private int headerRow;
-    private int masterSwitchRow;
-    private int hideTypingRow;
-    private int hideOnlineRow;
-    private int hideReadReceiptsRow;
-    private int hideForwardTagRow;
-    private int infoRow;
-
-    // Studio standalone rows
-    private int studioHeaderRow;
-    private int studioAppIdRow;
-    private int studioVersionRow;
-    private int studioLogsRow;
-
-    private static class SearchItem {
-        final int id;
-        final String title;
-        final String subtitle;
-        final boolean isCheck;
-
-        SearchItem(int id, String title, String subtitle, boolean isCheck) {
-            this.id = id;
-            this.title = title;
-            this.subtitle = subtitle;
-            this.isCheck = isCheck;
-        }
-    }
+    private int currentType = TYPE_FEATURES_HUB;
 
     public NGSettingsActivity() {
         this(TYPE_FEATURES_HUB);
     }
 
     public NGSettingsActivity(int type) {
-        super();
         this.currentType = type;
     }
+
+    private RecyclerListView listView;
+    private ListAdapter listAdapter;
+
+    private int headerStealth;
+    private int rowVerifiedBadge;
+    private int rowChannelVerifiedBadge;
+    private int rowBotVerifiedBadge;
+    private int rowAnonymousStories;
+    private int rowGhostMode = -1;
+    private int rowApkBlock = -1;
+    private int rowRadiantOnlineAura = -1;
+    private int rowStealthOfflinePresence = -1;
+    
+
+    private int headerMessaging;
+    private int rowOneTimeVoiceVideo;
+    private int rowVoiceChanger;
+    private int rowVideoShape;
+    private int rowAutoAddText;
+    private int rowEditText;
+    private int rowMessageScheduler;
+    private int rowSmartAutoReply;
+    private int rowTextStyle;
+    private int rowStorySaver;
+    private int rowSmartChatFolders;
+
+    private int headerSecurity;
+    private int rowAntiDelete;
+    private int rowEditHistory = -1;
+    private int rowShowIdDc;
+    private int rowHidePhoneNumber;
+    private int rowThemeMode;
+    private int rowBiometricLocker;
+
+    private int headerOptimization;
+    private int rowFocusMode;
+    private int rowStorageDoctor;
+    private int rowBatterySaver;
+    private int rowInstantTranslator;
+
+    private int headerInternational;
+    private int rowIntlClock;
+    private int rowLinkGuard;
+    private int rowReadableText;
+    private int rowReduceMotion;
+    private int rowChatListDetails;
+    private int rowPauseGifs;
+    private int rowSaveData;
+
+    private int headerSystem;
+    private int rowResetDefaults;
+    private int footerCopyrightRow;
+    private int rowCount;
 
     @Override
     public boolean onFragmentCreate() {
         super.onFragmentCreate();
-        initSearchItems();
         updateRows();
         return true;
     }
 
-    private void initSearchItems() {
-        allFeatures.clear();
-        allFeatures.add(new SearchItem(1, "Ghost Mode", "Main stealth switch for all privacy hooks", true));
-        allFeatures.add(new SearchItem(2, "Hide Typing Status", "Contacts will not see when you are typing", true));
-        allFeatures.add(new SearchItem(3, "Hide Online Status", "Keep last seen timestamp undisturbed", true));
-        allFeatures.add(new SearchItem(4, "Hide Read Receipts", "Read messages without marking as seen", true));
-        allFeatures.add(new SearchItem(5, "Anonymous Stories", "View user stories without leaving a view trace", true));
-        allFeatures.add(new SearchItem(6, "Story Saver", "Download and save photo/video stories locally", true));
-        allFeatures.add(new SearchItem(7, "Forward Without Quote", "Direct forward without original sender name", true));
-        allFeatures.add(new SearchItem(8, "Anti-Delete Messages", "Save incoming messages locally before deletion", true));
-        allFeatures.add(new SearchItem(9, "Confirm Actions", "Confirmation before placing calls or sending notes", true));
-        allFeatures.add(new SearchItem(10, "Show ID & Datacenter", "Display numeric Telegram ID & DC in user profile", true));
-        allFeatures.add(new SearchItem(11, "Reset All Features", "Restore all NG Features to default values", false));
-        
-        long clientUserId = UserConfig.getInstance(currentAccount).getClientUserId();
-        if (BuildVars.isNgStudioAllowed(clientUserId)) {
-            allFeatures.add(new SearchItem(12, "NG Control Dashboard", "Authorized developer telemetry & diagnostics", false));
-            allFeatures.add(new SearchItem(6, "Story Saver (Admin Only)", "Download stories locally (NG Control)", true));
-            allFeatures.add(new SearchItem(8, "Anti-Delete Messages (Admin Only)", "Preserve deleted messages (NG Control)", true));
-        }
-    }
-
     private void updateRows() {
         rowCount = 0;
+        headerStealth = rowCount++;
+        rowRadiantOnlineAura = rowCount++;
+        rowStealthOfflinePresence = rowCount++;
+        
+        rowVerifiedBadge = rowCount++;
+        rowChannelVerifiedBadge = rowCount++;
+        rowBotVerifiedBadge = rowCount++;
+        rowAnonymousStories = -1;
+        rowGhostMode = -1;
+        rowApkBlock = -1;
 
-        hubHeaderStories = -1;
-        hubRowAnonymousStories = -1;
-        hubRowStorySaver = -1;
-        hubHeaderStealth = -1;
-        hubRowGhostMaster = -1;
-        hubRowHideTyping = -1;
-        hubRowHideOnline = -1;
-        hubRowHideReadReceipts = -1;
-        hubHeaderMessaging = -1;
-        hubRowForwardNoQuote = -1;
-        hubRowAntiDelete = -1;
-        hubHeaderProtection = -1;
-        hubRowConfirmActions = -1;
-        hubRowShowIdDc = -1;
-        hubRowResetDefaults = -1;
-        hubHeaderStudio = -1;
-        hubRowStudio = -1;
-        hubFooterCopyrightRow = -1;
+        headerMessaging = rowCount++;
+        rowOneTimeVoiceVideo = rowCount++;
+        rowVoiceChanger = rowCount++;
+        rowVideoShape = -1;
+        rowAutoAddText = rowCount++;
+        rowEditText = rowCount++;
+        rowMessageScheduler = -1;
+        rowSmartAutoReply = rowCount++;
+        rowTextStyle = rowCount++;
+        rowStorySaver = -1;
+        rowSmartChatFolders = rowCount++;
 
-        headerRow = -1;
-        masterSwitchRow = -1;
-        hideTypingRow = -1;
-        hideOnlineRow = -1;
-        hideReadReceiptsRow = -1;
-        hideForwardTagRow = -1;
-        infoRow = -1;
+        headerSecurity = rowCount++;
+        rowAntiDelete = rowCount++;
+        rowEditHistory = rowCount++;
+        rowShowIdDc = rowCount++;
+        rowHidePhoneNumber = rowCount++;
+        rowThemeMode = rowCount++;
+        rowBiometricLocker = rowCount++;
+        rowApkBlock = rowCount++;
 
-        studioHeaderRow = -1;
-        studioAppIdRow = -1;
-        studioVersionRow = -1;
-        studioLogsRow = -1;
+        // Hide inactive feature placeholders instead of showing non-working controls.
+        headerOptimization = -1;
+        rowFocusMode = -1;
+        rowStorageDoctor = -1;
+        rowBatterySaver = -1;
+        rowInstantTranslator = -1;
 
-        if (currentType == TYPE_FEATURES_HUB) {
-            hubHeaderStories = rowCount++;
-            hubRowAnonymousStories = rowCount++;
-            hubRowStorySaver = rowCount++;
+        headerInternational = rowCount++;
+        rowIntlClock = rowCount++;
+        // These rows were marked for removal from this feature UI.
+        rowLinkGuard = -1;
+        rowReadableText = -1;
+        rowReduceMotion = -1;
+        rowChatListDetails = -1;
+        rowPauseGifs = -1;
+        rowSaveData = -1;
 
-            hubHeaderStealth = rowCount++;
-            hubRowGhostMaster = rowCount++;
-            hubRowHideTyping = rowCount++;
-            hubRowHideOnline = rowCount++;
-            hubRowHideReadReceipts = rowCount++;
-
-            hubHeaderMessaging = rowCount++;
-            hubRowForwardNoQuote = rowCount++;
-            hubRowAntiDelete = rowCount++;
-
-            hubHeaderProtection = rowCount++;
-            hubRowConfirmActions = rowCount++;
-            hubRowShowIdDc = rowCount++;
-            hubRowResetDefaults = rowCount++;
-
-            long clientUserId = UserConfig.getInstance(currentAccount).getClientUserId();
-            if (BuildVars.isNgStudioAllowed(clientUserId)) {
-                hubHeaderStudio = rowCount++;
-                hubRowStudio = rowCount++;
-            }
-
-            hubFooterCopyrightRow = rowCount++;
-        } else if (currentType == TYPE_GHOST_MODE) {
-            headerRow = rowCount++;
-            masterSwitchRow = rowCount++;
-            hideTypingRow = rowCount++;
-            hideOnlineRow = rowCount++;
-            hideReadReceiptsRow = rowCount++;
-            hideForwardTagRow = rowCount++;
-            infoRow = rowCount++;
-        } else if (currentType == TYPE_STUDIO) {
-            studioHeaderRow = rowCount++;
-            studioAppIdRow = rowCount++;
-            studioVersionRow = rowCount++;
-            studioLogsRow = rowCount++;
-            infoRow = rowCount++;
-        } else if (currentType == TYPE_ANTI_DELETE) {
-            headerRow = rowCount++;
-            masterSwitchRow = rowCount++;
-            infoRow = rowCount++;
-        }
-    }
-
-    private void filterFeatures(String query) {
-        searchResults.clear();
-        if (query == null || query.trim().isEmpty()) {
-            isSearching = false;
-        } else {
-            isSearching = true;
-            String lower = query.trim().toLowerCase(Locale.US);
-            for (SearchItem item : allFeatures) {
-                if (item.title.toLowerCase(Locale.US).contains(lower) || item.subtitle.toLowerCase(Locale.US).contains(lower)) {
-                    searchResults.add(item);
-                }
-            }
-        }
-        if (listAdapter != null) {
-            listAdapter.notifyDataSetChanged();
-        }
-    }
-
-    private void showResetConfirmationDialog() {
-        if (getParentActivity() == null) return;
-        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-        builder.setTitle("Reset NG Features");
-        builder.setMessage("Are you sure you want to restore all Naya Features (Ghost Mode, Anti-Delete, Stories, and Privacy) back to their defaults?");
-        builder.setPositiveButton("Reset", (dialog, which) -> {
-            NayaConfig.getInstance().resetToDefaults();
-            GhostModeManager.getInstance().resetAllSettings();
-            AntiDeleteManager.getInstance().setAntiDeleteEnabled(false);
-            if (listAdapter != null) {
-                listAdapter.notifyDataSetChanged();
-            }
-            if (getParentActivity() != null) {
-                BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "All features reset to default").show();
-            }
-        });
-        builder.setNegativeButton("Cancel", null);
-        showDialog(builder.create());
+        headerSystem = rowCount++;
+        rowResetDefaults = rowCount++;
+        footerCopyrightRow = rowCount++;
     }
 
     @Override
     public View createView(Context context) {
         actionBar.setBackButtonImage(R.drawable.ic_ab_back);
         actionBar.setAllowOverlayTitle(true);
-
-        if (currentType == TYPE_FEATURES_HUB) {
-            actionBar.setTitle("𝐍𝐆 𝐅𝐞𝐚𝐭𝐮𝐫𝐞");
-        } else if (currentType == TYPE_GHOST_MODE) {
-            actionBar.setTitle("Ghost Mode");
-        } else if (currentType == TYPE_STUDIO) {
-            actionBar.setTitle("NG Control");
-        } else {
-            actionBar.setTitle("Anti-Delete");
-        }
-
+        actionBar.setTitle("NayaGram Settings");
         ActionBarMenu menu = actionBar.createMenu();
-
-        if (currentType == TYPE_FEATURES_HUB) {
-            searchItem = menu.addItem(ITEM_SEARCH, R.drawable.outline_header_search).setIsSearchField(true).setActionBarMenuItemSearchListener(new ActionBarMenuItem.ActionBarMenuItemSearchListener() {
-                @Override
-                public void onSearchExpand() {
-                    isSearching = true;
-                }
-
-                @Override
-                public void onSearchCollapse() {
-                    isSearching = false;
-                    searchQuery = "";
-                    filterFeatures("");
-                }
-
-                @Override
-                public void onTextChanged(EditText editText) {
-                    searchQuery = editText.getText().toString();
-                    filterFeatures(searchQuery);
-                }
-            });
-            searchItem.setSearchFieldHint(LocaleController.getString("Search", R.string.Search));
-
-            ActionBarMenuItem otherItem = menu.addItem(ITEM_MORE, R.drawable.ic_ab_other);
-            otherItem.addSubItem(SUB_ITEM_RESET, R.drawable.msg_reset, "Reset to defaults");
-        }
+        ActionBarMenuItem overflowItem = menu.addItem(0, R.drawable.ic_ab_other);
+        overflowItem.setIconColor(0xFF00D4FF);
+        overflowItem.addSubItem(3, R.drawable.outline_shield_check, "Privacy & Security Audit").setIconColor(0xFF059669);
+        overflowItem.addSubItem(4, R.drawable.msg_send, "Contact Support").setIconColor(0xFF2563EB);
+        overflowItem.addSubItem(7, R.drawable.msg_admins, "Leadership & Admin").setIconColor(0xFF7C3AED);
+        overflowItem.addSubItem(6, R.drawable.ic_naya_info, "About NayaGram").setIconColor(0xFF0284C7);
+        overflowItem.addSubItem(5, R.drawable.outline_revert_24, "Restore Defaults").setIconColor(0xFFDB2777);
 
         actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
             @Override
             public void onItemClick(int id) {
                 if (id == -1) {
                     finishFragment();
-                } else if (id == SUB_ITEM_RESET) {
-                    showResetConfirmationDialog();
+                } else if (id == 3) {
+                    showPrivacyAuditDialog(context);
+                } else if (id == 4) {
+                    try {
+                        Intent emailIntent = new Intent(Intent.ACTION_SENDTO);
+                        emailIntent.setData(Uri.parse("mailto:support.nayagram@gmail.com"));
+                        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "NayaGram Support & Inquiry");
+                        context.startActivity(emailIntent);
+                    } catch (Exception ignored) {}
+                } else if (id == 7 || id == 8) {
+                    presentFragment(new org.nayagram.platform.ui.NGAdminActivity());
+                } else if (id == 6) {
+                    presentFragment(new NayaAboutActivity());
+                } else if (id == 5) {
+                    NayaConfig.getInstance().resetToDefaults();
+                    if (listAdapter != null) listAdapter.notifyDataSetChanged();
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Restored Defaults").show();
                 }
             }
         });
 
         fragmentView = new FrameLayout(context);
+        fragmentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
         FrameLayout frameLayout = (FrameLayout) fragmentView;
-        frameLayout.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
 
         listView = new RecyclerListView(context);
         listView.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
         listView.setVerticalScrollBarEnabled(false);
-        listView.setClipToPadding(false);
-        listView.setPadding(0, 0, 0, AndroidUtilities.dp(80));
         listView.setAdapter(listAdapter = new ListAdapter(context));
         ((DefaultItemAnimator) listView.getItemAnimator()).setDelayAnimations(false);
         frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
         listView.setOnItemClickListener((view, position) -> {
-            GhostModeManager gm = GhostModeManager.getInstance();
             NayaConfig cfg = NayaConfig.getInstance();
+            if (view instanceof NGFeatureCell) {
+                NGFeatureCell cell = (NGFeatureCell) view;
+                if (isPendingFeaturePosition(position)) {
+                    showFeatureDetailSheet(position);
+                    return;
+                }
+                boolean checked = !cell.isChecked();
 
-            if (isSearching) {
-                if (position >= 0 && position < searchResults.size()) {
-                    SearchItem item = searchResults.get(position);
-                    switch (item.id) {
-                        case 1:
-                            gm.setGhostModeEnabled(!gm.isGhostModeEnabled());
-                            break;
-                        case 2:
-                            gm.setHideTypingStatus(!gm.isHideTypingStatus());
-                            break;
-                        case 3:
-                            gm.setHideOnlineStatus(!gm.isHideOnlineStatus());
-                            break;
-                        case 4:
-                            gm.setHideReadReceipts(!gm.isHideReadReceipts());
-                            break;
-                        case 5:
-                            cfg.setAnonymousStories(!cfg.isAnonymousStories());
-                            break;
-                        case 6:
-                            cfg.setStorySaverEnabled(!cfg.isStorySaverEnabled());
-                            break;
-                        case 7:
-                            cfg.setForwardWithoutQuote(!cfg.isForwardWithoutQuote());
-                            break;
-                        case 8:
-                            AntiDeleteManager.getInstance().setAntiDeleteEnabled(!AntiDeleteManager.getInstance().isAntiDeleteEnabled());
-                            break;
-                        case 9:
-                            cfg.setConfirmActions(!cfg.isConfirmActions());
-                            break;
-                        case 10:
-                            cfg.setShowIdAndDc(!cfg.isShowIdAndDc());
-                            break;
-                        case 11:
-                            showResetConfirmationDialog();
-                            return;
-                        case 12:
-                            presentFragment(new NGSettingsActivity(TYPE_STUDIO));
-                            return;
-                    }
-                    if (listAdapter != null) listAdapter.notifyDataSetChanged();
-                }
-                return;
-            }
+                if (position == rowVerifiedBadge) {
+                    cfg.setVerifiedBadgeEnabled(checked);
+                    cell.setChecked(checked);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_NAME);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.dialogsNeedReload);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.mainUserInfoChanged);
+                    NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.reloadInterface);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(
+                        checked ? R.raw.done : R.raw.chats_infotip,
+                        "User Profile Verified Badge: " + (checked ? "Enabled" : "Disabled")
+                    ).show();
+                } else if (position == rowChannelVerifiedBadge) {
+                    cfg.setChannelVerifiedBadgeEnabled(checked);
+                    cell.setChecked(checked);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_NAME);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.dialogsNeedReload);
+                    NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.reloadInterface);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(
+                        checked ? R.raw.done : R.raw.chats_infotip,
+                        "Channel & Group Verified Badge: " + (checked ? "Enabled" : "Disabled")
+                    ).show();
+                } else if (position == rowBotVerifiedBadge) {
+                    cfg.setBotVerifiedBadgeEnabled(checked);
+                    cell.setChecked(checked);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_NAME);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.dialogsNeedReload);
+                    NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.reloadInterface);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(
+                        checked ? R.raw.done : R.raw.chats_infotip,
+                        "Bot Verified Badge: " + (checked ? "Enabled" : "Disabled")
+                    ).show();
+                } else if (position == rowRadiantOnlineAura) {
+                    boolean newval = !cfg.isRadiantOnlineAuraEnabled();
+                    cfg.setRadiantOnlineAuraEnabled(newval);
+                    cell.setChecked(newval);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_NAME);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.dialogsNeedReload);
+                    NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.reloadInterface);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(
+                        newval ? R.raw.done : R.raw.chats_infotip,
+                        "Radiant Online Aura: " + (newval ? "Enabled" : "Disabled")
+                    ).show();
+                } else if (position == rowStealthOfflinePresence) {
+                    boolean newval = !cfg.isStealthOfflinePresenceEnabled();
+                    cfg.setStealthOfflinePresenceEnabled(newval);
+                    cell.setChecked(newval);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_NAME);
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.dialogsNeedReload);
+                    NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.reloadInterface);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(
+                        newval ? R.raw.done : R.raw.chats_infotip,
+                        "Stealth Offline Presence: " + (newval ? "Enabled" : "Disabled")
+                    ).show();
+                } else if (position == rowApkBlock) {
+                    cfg.setApkBlockEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "APK & ZIP Security Shield: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowSmartAutoReply) {
+                    presentFragment(new NGAutoReplyActivity());
+                } else if (position == rowTextStyle) {
+                    org.nayagram.platform.textstyle.NGTextStyleHelper.showDialog(getParentActivity(), () -> {
+                        if (listAdapter != null && rowTextStyle != -1) {
+                            listAdapter.notifyItemChanged(rowTextStyle);
+                        }
+                    });
+                } else if (position == rowOneTimeVoiceVideo) {
+                    cfg.setOneTimeVoiceVideoEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "One-time voice & video: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowVoiceChanger) {
+                    org.nayagram.platform.audio.NGVoiceChangerManager.showDialog(getParentActivity(), () -> {
+                        if (listAdapter != null && rowVoiceChanger != -1) {
+                            listAdapter.notifyItemChanged(rowVoiceChanger);
+                        }
+                    });
+                } else if (position == rowVideoShape && rowVideoShape != -1) {
+                    showVideoShapePickerDialog();
+                } else if (position == rowAutoAddText) {
+                    cfg.setAutoAddTextEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Auto-add text: " + (checked ? "On" : "Off")).show();
+                    if (checked) showAutoAddTextConfigDialog();
+                } else if (position == rowEditText) {
+                    showAutoAddTextConfigDialog();
+                } else if (position == rowSmartChatFolders) {
+                    // Use Telegram's existing folder editor instead of a preference-only fake toggle.
+                    cfg.setSmartFoldersEnabled(true);
+                    cell.setChecked(true);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Opening native chat folder management").show();
+                    presentFragment(new FiltersSetupActivity());
 
-            if (currentType == TYPE_FEATURES_HUB) {
-                if (position == hubRowAnonymousStories) {
-                    cfg.setAnonymousStories(!cfg.isAnonymousStories());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(cfg.isAnonymousStories());
-                    }
-                } else if (position == hubRowStorySaver) {
-                    cfg.setStorySaverEnabled(!cfg.isStorySaverEnabled());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(cfg.isStorySaverEnabled());
-                    }
-                } else if (position == hubRowGhostMaster) {
-                    gm.setGhostModeEnabled(!gm.isGhostModeEnabled());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isGhostModeEnabled());
-                    }
+                } else if (position == rowHidePhoneNumber) {
+                    cfg.setHidePhoneNumberEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, checked ? "Phone Privacy Enabled" : "Phone Privacy Disabled").show();
+                } else if (position == rowThemeMode) {
+                    int nextMode = (cfg.getAppThemeMode() + 1) % 3;
+                    cfg.setAppThemeMode(nextMode);
+                    try {
+                        if (nextMode == NayaConfig.THEME_MODE_LIGHT) {
+                            Theme.applyTheme(Theme.getCurrentTheme());
+                        } else {
+                            Theme.applyTheme(Theme.getCurrentNightTheme(), true);
+                        }
+                        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.needSetDayNightTheme);
+                    } catch (Throwable ignored) {}
                     if (listAdapter != null) listAdapter.notifyDataSetChanged();
-                } else if (position == hubRowHideTyping) {
-                    gm.setHideTypingStatus(!gm.isHideTypingStatus());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isHideTypingStatus());
+                    String modeName = nextMode == NayaConfig.THEME_MODE_LIGHT ? "Light Slate" : (nextMode == NayaConfig.THEME_MODE_NEON_AURORA ? "Naya Neon Aurora (Cyan-Purple)" : "Dark Slate Blue");
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Theme: " + modeName).show();
+                } else if (position == rowAntiDelete) {
+                    cfg.setPreventMessageDeletionEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Anti-Delete Messages: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowEditHistory) {
+                    cfg.setSaveEditHistoryEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Message Edit History: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowShowIdDc) {
+                    cfg.setShowIdAndDc(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "User ID & DC: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowBiometricLocker) {
+                    if (checked) {
+                        if (!org.nayagram.platform.security.BiometricChatLocker.isDeviceSecurityAvailable(getParentActivity())) {
+                            AlertDialog.Builder securityDialog = new AlertDialog.Builder(getParentActivity());
+                            securityDialog.setTitle("Secure your device first");
+                            securityDialog.setMessage("Set a PIN, password, or pattern in Android Security Settings before enabling Biometric Chat Locker. Face or fingerprint unlock can then be used when supported by your device.");
+                            securityDialog.setNegativeButton("Cancel", null);
+                            securityDialog.setPositiveButton("Open Settings", (dialog, which) -> {
+                                try {
+                                    getParentActivity().startActivity(new Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS));
+                                } catch (Exception ignored) {
+                                    android.widget.Toast.makeText(getParentActivity(), "Open Android Settings and set a secure screen lock", android.widget.Toast.LENGTH_LONG).show();
+                                }
+                            });
+                            showDialog(securityDialog.create());
+                            return;
+                        }
+                        cfg.setBiometricChatLockerEnabled(true);
+                        cell.setChecked(true);
+                        BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done,
+                                "Locker enabled. Open a chat's NayaGram In-Chat Settings to protect it.").show();
+                    } else {
+                        AlertDialog.Builder disableDialog = new AlertDialog.Builder(getParentActivity());
+                        disableDialog.setTitle("Turn off Biometric Chat Locker?");
+                        disableDialog.setMessage("You will not be able to protect additional chats. Existing protected chats stay locked until you open each chat's NayaGram In-Chat Settings and unlock it. Continue?");
+                        disableDialog.setNegativeButton("Keep enabled", null);
+                        disableDialog.setPositiveButton("Turn off", (dialog, which) -> {
+                            cfg.setBiometricChatLockerEnabled(false);
+                            cell.setChecked(false);
+                            BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Biometric Chat Locker disabled for new locks").show();
+                        });
+                        showDialog(disableDialog.create());
                     }
-                } else if (position == hubRowHideOnline) {
-                    gm.setHideOnlineStatus(!gm.isHideOnlineStatus());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isHideOnlineStatus());
-                    }
-                } else if (position == hubRowHideReadReceipts) {
-                    gm.setHideReadReceipts(!gm.isHideReadReceipts());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isHideReadReceipts());
-                    }
-                } else if (position == hubRowForwardNoQuote) {
-                    cfg.setForwardWithoutQuote(!cfg.isForwardWithoutQuote());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(cfg.isForwardWithoutQuote());
-                    }
-                } else if (position == hubRowAntiDelete) {
-                    AntiDeleteManager adm = AntiDeleteManager.getInstance();
-                    adm.setAntiDeleteEnabled(!adm.isAntiDeleteEnabled());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(adm.isAntiDeleteEnabled());
-                    }
-                } else if (position == hubRowConfirmActions) {
-                    cfg.setConfirmActions(!cfg.isConfirmActions());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(cfg.isConfirmActions());
-                    }
-                } else if (position == hubRowShowIdDc) {
-                    cfg.setShowIdAndDc(!cfg.isShowIdAndDc());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(cfg.isShowIdAndDc());
-                    }
-                } else if (position == hubRowResetDefaults) {
-                    showResetConfirmationDialog();
-                } else if (position == hubRowStudio) {
-                    presentFragment(new NGSettingsActivity(TYPE_STUDIO));
+                } else if (position == rowFocusMode) {
+                    cfg.setFocusModeEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Focus Mode: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowBatterySaver) {
+                    cfg.setBatterySaverEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Battery Saver: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowInstantTranslator) {
+                    cfg.setInstantTranslatorEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Instant Translator: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowIntlClock) {
+                    cfg.setInternationalClock(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "24-hour clock: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowLinkGuard) {
+                    cfg.setLinkGuardEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Link check: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowReadableText) {
+                    cfg.setReadableTextEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Larger text: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowReduceMotion) {
+                    cfg.setReduceMotion(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Reduce motion: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowChatListDetails) {
+                    cfg.setChatListDetails(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Chat list details: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowPauseGifs) {
+                    cfg.setPauseGifAutoplay(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Pause GIFs: " + (checked ? "On" : "Off")).show();
+                } else if (position == rowSaveData) {
+                    cfg.setDataSaverEnabled(checked);
+                    cell.setChecked(checked);
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Save mobile data: " + (checked ? "On" : "Off")).show();
                 }
-            } else if (currentType == TYPE_GHOST_MODE) {
-                if (position == masterSwitchRow) {
-                    gm.setGhostModeEnabled(!gm.isGhostModeEnabled());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isGhostModeEnabled());
-                    }
-                    if (listAdapter != null) listAdapter.notifyDataSetChanged();
-                } else if (position == hideTypingRow) {
-                    gm.setHideTypingStatus(!gm.isHideTypingStatus());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isHideTypingStatus());
-                    }
-                } else if (position == hideOnlineRow) {
-                    gm.setHideOnlineStatus(!gm.isHideOnlineStatus());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isHideOnlineStatus());
-                    }
-                } else if (position == hideReadReceiptsRow) {
-                    gm.setHideReadReceipts(!gm.isHideReadReceipts());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isHideReadReceipts());
-                    }
-                } else if (position == hideForwardTagRow) {
-                    gm.setHideForwardTag(!gm.isHideForwardTag());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(gm.isHideForwardTag());
-                    }
-                }
-            } else if (currentType == TYPE_ANTI_DELETE) {
-                if (position == masterSwitchRow) {
-                    AntiDeleteManager adm = AntiDeleteManager.getInstance();
-                    adm.setAntiDeleteEnabled(!adm.isAntiDeleteEnabled());
-                    if (view instanceof TextCheckCell) {
-                        ((TextCheckCell) view).setChecked(adm.isAntiDeleteEnabled());
-                    }
-                }
+            } else if (position == rowStorageDoctor) {
+                runStorageDoctorScan();
+            } else if (position == rowResetDefaults) {
+                showResetDialog();
             }
+        });
+
+        listView.setOnItemLongClickListener((view, position) -> {
+            showFeatureDetailSheet(position);
+            return true;
         });
 
         return fragmentView;
     }
 
-    private CharSequence createNayaCopyrightSpan() {
-        int currentYear = Calendar.getInstance().get(Calendar.YEAR);
-        SpannableStringBuilder ssb = new SpannableStringBuilder();
+    private void runStorageDoctorScan() {
+        if (getParentActivity() == null) return;
+        AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
+        b.setTitle("⚡ Smart Storage Doctor");
+        b.setMessage("Scanning cache & temporary files...");
+        AlertDialog progressDialog = b.create();
+        showDialog(progressDialog);
 
-        boolean isDark = Theme.isCurrentThemeDark();
-        int greenColor = isDark ? 0xFF4ADE80 : 0xFF16A34A;
-        int purpleColor = isDark ? 0xFFC084FC : 0xFF7C3AED;
-        int blueColor = isDark ? 0xFF60A5FA : 0xFF2563EB;
+        org.nayagram.platform.storage.SmartStorageDoctor.getInstance().scanStorage(getParentActivity(), report -> {
+            try {
+                progressDialog.dismiss();
+            } catch (Throwable ignored) {
+            }
 
-        // Line 1: © {YEAR} 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦. All rights reserved.
-        int start = ssb.length();
-        ssb.append("© ").append(String.valueOf(currentYear)).append(" ");
-        ssb.setSpan(new ForegroundColorSpan(greenColor), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            if (report == null || report.totalReclaimableBytes <= 0) {
+                AlertDialog.Builder cleanB = new AlertDialog.Builder(getParentActivity());
+                cleanB.setTitle("Storage Clean");
+                cleanB.setMessage("Your cache is completely optimized and clean! No unnecessary temporary files found.");
+                cleanB.setPositiveButton("OK", null);
+                showDialog(cleanB.create());
+                return;
+            }
 
-        start = ssb.length();
-        ssb.append("𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 ");
-        ssb.setSpan(new ForegroundColorSpan(purpleColor), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        ssb.setSpan(new StyleSpan(Typeface.BOLD), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            AlertDialog.Builder cleanB = new AlertDialog.Builder(getParentActivity());
+            cleanB.setTitle("🧹 Storage Analysis");
+            cleanB.setMessage("Found reclaimable cache:\n\n" +
+                    "• Total Cache: " + report.getFormattedTotal() + "\n" +
+                    "• Cached Files: " + report.fileCount + "\n\n" +
+                    "Clean cache now to boost NayaGram speed?");
+            cleanB.setPositiveButton("Clean Now", (d, w) -> {
+                org.nayagram.platform.storage.SmartStorageDoctor.getInstance().cleanCache(getParentActivity(), (freed, success) -> {
+                    BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(
+                            R.raw.done,
+                            "Cleaned " + org.nayagram.platform.storage.SmartStorageDoctor.formatSize(freed) + " cache!"
+                    ).show();
+                });
+            });
+            cleanB.setNegativeButton("Cancel", null);
+            showDialog(cleanB.create());
+        });
+    }
 
-        start = ssb.length();
-        ssb.append("𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦");
-        ssb.setSpan(new ForegroundColorSpan(blueColor), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        ssb.setSpan(new StyleSpan(Typeface.BOLD), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    private void showAutoAddTextConfigDialog() {
+        if (getParentActivity() == null) return;
+        AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
+        b.setTitle("Auto-add text");
+        b.setMessage("Append your custom text or username to every message you send");
+        final EditText et = new EditText(getParentActivity());
+        et.setText(NayaConfig.getInstance().getAutoAddText());
+        et.setSelection(et.getText().length());
+        b.setView(et);
+        b.setPositiveButton("Save", (d, w) -> {
+            String text = et.getText().toString().trim();
+            NayaConfig.getInstance().setAutoAddText(text.isEmpty() ? "@NGSupreme" : text);
+            if (listAdapter != null) listAdapter.notifyDataSetChanged();
+            BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Auto-add text saved").show();
+        });
+        b.setNegativeButton("Cancel", null);
+        showDialog(b.create());
+    }
 
-        start = ssb.length();
-        ssb.append(". All rights reserved.\n");
-        ssb.setSpan(new ForegroundColorSpan(greenColor), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    private void showAutoReplyConfigDialog() {
+        AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
+        b.setTitle("Smart Auto-Reply Message");
+        final EditText et = new EditText(getParentActivity());
+        et.setText(NayaConfig.getInstance().getAutoReplyText());
+        et.setSelection(et.getText().length());
+        b.setView(et);
+        b.setPositiveButton("Save", (d, w) -> {
+            NayaConfig.getInstance().setAutoReplyText(et.getText().toString());
+            BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Auto-reply message updated").show();
+        });
+        b.setNegativeButton("Cancel", null);
+        showDialog(b.create());
+    }
 
-        // Line 2: Built with ❤️ in Bangladesh 🇧🇩 - [CurrentYear]
-        start = ssb.length();
-        ssb.append("Built with ❤️ in Bangladesh 🇧🇩 - ").append(String.valueOf(currentYear));
-        ssb.setSpan(new ForegroundColorSpan(blueColor), start, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    private void showResetDialog() {
+        AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
+        b.setTitle("Reset Settings");
+        b.setMessage("Reset all NayaGram features to defaults?");
+        b.setPositiveButton("Reset", (d, w) -> {
+            NayaConfig.getInstance().resetToDefaults();
+            if (listAdapter != null) listAdapter.notifyDataSetChanged();
+            BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(R.raw.done, "Settings reset to default").show();
+        });
+        b.setNegativeButton("Cancel", null);
+        showDialog(b.create());
+    }
 
-        // Centered alignment
-        ssb.setSpan(new AlignmentSpan.Standard(android.text.Layout.Alignment.ALIGN_CENTER), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        return ssb;
+
+    private boolean isPendingFeaturePosition(int position) {
+        return position == rowFocusMode
+                || position == rowBatterySaver
+                || position == rowInstantTranslator;
+    }
+
+    private void showFeatureDetailSheet(int position) {
+        if (getParentActivity() == null) return;
+        String title;
+        String body;
+        if (position == rowVerifiedBadge || position == rowChannelVerifiedBadge || position == rowBotVerifiedBadge) {
+            AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
+            b.setTitle("NayaGram Verified Badge");
+            b.setMessage("About NayaGram Verified Badge:\n\n" +
+                "\u2022 Purpose: A visual badge designed to highlight trusted community members, channels, groups, and bots across the NayaGram ecosystem.\n\n" +
+                "\u2022 Important Notice: This badge is exclusively an internal NayaGram customization feature. It is NOT official verification from Telegram (Telegram FZ-LLC), nor is it issued or endorsed by any government entity or regulatory authority. Official Telegram server verifications are independent and remain authoritative.\n\n" +
+                "\u2014 \u09ac\u09be\u0982\u09b2\u09be \u09ac\u09bf\u09ac\u09b0\u09a3 \u2014\n\n" +
+                "\u2022 \u0989\u09a6\u09cd\u09a6\u09c7\u09b6\u09cd\u09af: \u09a8\u09be\u09af\u09bc\u09be\u0997\u09cd\u09b0\u09be\u09ae \u09aa\u09cd\u09b2\u09cd\u09af\u09be\u099f\u09ab\u09b0\u09cd\u09ae\u09c7 \u09ac\u09bf\u09b6\u09cd\u09ac\u09b8\u09cd\u09a4 \u09b8\u09a6\u09b8\u09cd\u09af, \u099a\u09cd\u09af\u09be\u09a8\u09c7\u09b2, \u0997\u09cd\u09b0\u09c1\u09aa \u0993 \u09ac\u099f\u09a6\u09c7\u09b0 \u098f\u0995\u099f\u09bf \u09b8\u09c1\u09a8\u09cd\u09a6\u09b0 \u09ad\u09bf\u099c\u09cd\u09af\u09c1\u09af\u09bc\u09be\u09b2 \u09aa\u09b0\u09bf\u099a\u09bf\u09a4\u09bf \u09a6\u09c7\u0993\u09af\u09bc\u09be।\n\n" +
+                "\u2022 \u099c\u09b0\u09c1\u09b0\u09bf \u09ac\u09bf\u099c\u09cd\u099e\u09aa\u09cd\u09a4\u09bf: \u098f\u0987 \u09ac\u09cd\u09af\u09be\u099c\u099f\u09bf \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09a8\u09be\u09af\u09bc\u09be\u0997\u09cd\u09b0\u09be\u09ae \u0985\u09cd\u09af\u09be\u09aa\u09c7\u09b0 \u0985\u09ad\u09cd\u09af\u09a8\u09cd\u09a4\u09b0\u09c0\u09a3 \u09ad\u09bf\u099c\u09cd\u09af\u09c1\u09af\u09bc\u09be\u09b2 \u09ab\u09bf\u099a\u09be\u09b0\u0964 \u098f\u099f\u09bf \u09ae\u09c2\u09b2 \u099f\u09c7\u09b2\u09bf\u0997\u09cd\u09b0\u09be\u09ae (Telegram FZ-LLC) \u09ac\u09be \u09b8\u09b0\u0995\u09be\u09b0\u09bf \u0995\u09cb\u09a8\u09cb \u09b8\u0982\u09b8\u09cd\u09a5\u09be\u09b0 \u0985\u09ab\u09bf\u09b6\u09bf\u09af\u09bc\u09be\u09b2 \u09ad\u09c7\u09b0\u09bf\u09ab\u09bf\u0995\u09c7\u09b6\u09a8 \u09a8\u09af\u09bc।");
+            b.setPositiveButton("Got it", null);
+            showDialog(b.create());
+            return;
+        }
+        if (position == rowAnonymousStories) {
+            title = "Anonymous Stories";
+            body = "Privacy preference for story views.\n\nStory view behavior still follows Telegram server rules. This toggle does not hide you from Telegram if the server requires a view receipt.";
+        } else if (position == rowMessageScheduler) {
+            title = "Message Scheduler";
+            body = "Use Telegram's built-in schedule (long-press Send) to send later.\n\nThis switch stores your preference. It does not replace Telegram's official scheduler.";
+        } else if (position == rowSmartAutoReply) {
+            title = "Auto answer";
+            body = "Automatically replies once to the first incoming message using your formatted reply text.";
+        } else if (position == rowStorySaver) {
+            title = "Story Saver";
+            body = "Preference for saving stories you are allowed to view.\n\nDownload only content you have permission to save.";
+
+        } else if (position == rowSmartChatFolders) {
+            title = "Smart Chat Folders";
+            body = "Opens Telegram's native chat-folder manager so you can create, edit, and organize your own folders using Telegram's existing filter system. Folder membership and chat filtering remain managed by Telegram.";
+
+        } else if (position == rowHidePhoneNumber) {
+            title = "Screen Share Phone Privacy";
+            body = "Blur and mask your phone number during screen sharing.";
+        } else if (position == rowThemeMode) {
+            title = "Naya Theme Mode";
+            body = "Switch between Dark Slate, Light Slate, and Naya Neon Aurora themes.";
+        } else if (position == rowAntiDelete) {
+            title = "Anti-Delete Messages";
+            body = "Keep deleted incoming messages in chats with a stylish cyan-blue tag indicator. Messages remain preserved even if the sender deletes them for everyone.";
+        } else if (position == rowShowIdDc) {
+            title = "User ID & DC Display";
+            body = "Shows Telegram user ID and data-center hints where the profile screen supports it.";
+        } else if (position == rowBiometricLocker) {
+            title = "Biometric Chat Locker";
+            body = "Protect individual chats with your device's secure screen lock, fingerprint, or face unlock when supported. Enable this feature here, then open the chosen chat's three-dot menu → NayaGram In-Chat Settings → Biometric Chat Lock. The chat is closed immediately and authentication is required before it can be opened again.\n\nA secure PIN, password, or pattern must be configured in Android Settings first. Turning this master switch off prevents new chat locks; existing protected chats remain locked until you unlock them individually. This is a chat-entry lock, not a separate hidden vault.";
+        } else if (position == rowFocusMode) {
+            title = "Focus & Wellbeing Mode";
+            body = "Not active yet. Quiet hours, notification scheduling and exceptions are not connected.\n\nIt does not mute Telegram notifications by itself unless you also change notification settings.";
+        } else if (position == rowStorageDoctor) {
+            title = "Smart Storage Doctor";
+            body = "Opens a storage summary and a cleanup confirmation.\n\nThe numbers are an estimate. Chats and media you sent are not deleted.";
+        } else if (position == rowBatterySaver) {
+            title = "Ultra Battery Saver";
+            body = "Not active yet. Low-battery detection and automatic playback or background-work controls are not connected.\n\nTelegram's own sync still runs so messages arrive.";
+        } else if (position == rowInstantTranslator) {
+            title = "In-Chat Instant Translator";
+            body = "Not active yet. This screen is not connected to a translation service or an in-chat translate action.\n\nIt does not send your chats to a private NayaGram server.";
+        } else if (position == rowIntlClock) {
+            title = "24-hour clock";
+            body = "Shows times as 13:45 instead of 1:45 PM. Useful when you travel or talk to people in other countries.\n\nThis only changes how times look on your phone. Telegram is not contacted.";
+        } else if (position == rowLinkGuard) {
+            title = "Check unknown links";
+            body = "Asks before opening a website that is not Telegram.\n\nTelegram links such as t.me still open normally. You can cancel a suspicious link.";
+        } else if (position == rowReadableText) {
+            title = "Larger text";
+            body = "Raises the chat text size to at least 18. Turning it off restores your previous size.\n\nThis uses Telegram's own text-size setting.";
+        } else if (position == rowReduceMotion) {
+            title = "Reduce motion";
+            body = "Turns off extra interface animations on this phone. Messages, calls, and accounts are unchanged.";
+        } else if (position == rowChatListDetails) {
+            title = "Chat list details";
+            body = "Shows three lines in the chat list so names and last messages are easier to scan.";
+        } else if (position == rowPauseGifs) {
+            title = "Pause GIFs";
+            body = "Stops GIFs from playing by themselves in chats. You can still open them. This uses Telegram's own autoplay setting.";
+        } else if (position == rowSaveData) {
+            title = "Save mobile data";
+            body = "Does not download media until you open it. Useful on limited mobile plans. This uses Telegram's stream-media setting.";
+        } else if (position == rowResetDefaults) {
+            title = "Restore Defaults";
+            body = "Resets NayaGram feature switches to their original values. Your Telegram chats are not deleted.";
+        } else {
+            return;
+        }
+        AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
+        b.setTitle(title);
+        b.setMessage(body);
+        b.setPositiveButton("Got it", null);
+        showDialog(b.create());
+    }
+
+    private void showPrivacyAuditDialog(Context context) {
+        org.nayagram.platform.ui.NGPrivacyAuditDialog.show(context);
+    }
+
+    /**
+     * NGFeatureCell - Telegram modern-styled row with colored rounded badge box,
+     * crisp typography, and native switch.
+     */
+    public static class NGFeatureCell extends FrameLayout {
+        private final BadgeView badgeView;
+        private final TextView titleView;
+        private final TextView subtitleView;
+        private final Switch switchView;
+        private boolean needDivider;
+
+        public NGFeatureCell(Context context) {
+            super(context);
+            setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+
+            badgeView = new BadgeView(context);
+            badgeView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            addView(badgeView, LayoutHelper.createFrameRelatively(36, 36, Gravity.START | Gravity.CENTER_VERTICAL, 16, 0, 0, 0));
+
+            LinearLayout textLayout = new LinearLayout(context);
+            textLayout.setOrientation(LinearLayout.VERTICAL);
+            addView(textLayout, LayoutHelper.createFrameRelatively(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.START | Gravity.CENTER_VERTICAL, 66, 10, 68, 10));
+
+            titleView = new TextView(context);
+            titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            titleView.setTypeface(AndroidUtilities.getTypeface("fonts/rmedium.ttf"));
+            titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            titleView.setMaxLines(2);
+            titleView.setEllipsize(TextUtils.TruncateAt.END);
+            textLayout.addView(titleView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+            subtitleView = new TextView(context);
+            subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+            subtitleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText2));
+            subtitleView.setMaxLines(3);
+            subtitleView.setEllipsize(TextUtils.TruncateAt.END);
+            textLayout.addView(subtitleView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 2, 0, 0));
+
+            switchView = new Switch(context);
+            switchView.setColors(Theme.key_switchTrack, Theme.key_switchTrackChecked, Theme.key_windowBackgroundWhite, Theme.key_windowBackgroundWhite);
+            addView(switchView, LayoutHelper.createFrameRelatively(37, 20, Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 16, 0));
+
+            setFocusable(true);
+            setMinimumHeight(AndroidUtilities.dp(60));
+            setWillNotDraw(false);
+        }
+
+        public void setFeature(int iconRes, int badgeColor, String title, String subtitle, boolean checked, boolean divider) {
+            badgeView.setData(iconRes, badgeColor);
+            titleView.setText(title);
+            subtitleView.setText(subtitle);
+            boolean unavailable = title.contains("· SOON");
+            switchView.setVisibility(unavailable ? View.GONE : View.VISIBLE);
+            switchView.setChecked(unavailable ? false : checked, false);
+            this.needDivider = divider;
+            updateAccessibilityLabel();
+            invalidate();
+        }
+
+        public void setActionFeature(int iconRes, int badgeColor, String title, String subtitle, boolean divider) {
+            setFeature(iconRes, badgeColor, title, subtitle, false, divider);
+            // Action rows navigate to a native manager; they are not on/off preferences.
+            switchView.setVisibility(View.GONE);
+            updateAccessibilityLabel();
+        }
+
+        public void setChecked(boolean checked) {
+            switchView.setChecked(checked, true);
+            updateAccessibilityLabel();
+        }
+
+        public boolean isChecked() {
+            return switchView.isChecked();
+        }
+
+        private void updateAccessibilityLabel() {
+            String title = titleView.getText() != null ? titleView.getText().toString() : "";
+            String subtitle = subtitleView.getText() != null ? subtitleView.getText().toString() : "";
+            String status = title.contains("· SOON") ? "Unavailable" : (switchView.isChecked() ? "Enabled" : "Disabled");
+            setContentDescription(title + ", " + subtitle + ", " + status);
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            super.onMeasure(
+                    MeasureSpec.makeMeasureSpec(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            );
+            int measuredHeight = Math.max(AndroidUtilities.dp(60), getMeasuredHeight());
+            setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), measuredHeight);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            if (needDivider) {
+                canvas.drawLine(AndroidUtilities.dp(66), getMeasuredHeight() - 1, getMeasuredWidth(), getMeasuredHeight() - 1, Theme.dividerPaint);
+            }
+        }
+    }
+
+    /**
+     * BadgeView - Beautiful colored rounded box (36x36dp) with modern Telegram vibrant colors.
+     */
+    private static class BadgeView extends View {
+        private final Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rect = new RectF();
+        private android.graphics.drawable.Drawable iconDrawable;
+
+        public BadgeView(Context context) {
+            super(context);
+        }
+
+        public void setData(int iconRes, int color) {
+            this.bgPaint.setColor(color);
+            if (iconRes != 0) {
+                iconDrawable = androidx.core.content.ContextCompat.getDrawable(getContext(), iconRes);
+                if (iconDrawable != null) {
+                    iconDrawable = iconDrawable.mutate();
+                    iconDrawable.setColorFilter(new android.graphics.PorterDuffColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN));
+                }
+            } else {
+                iconDrawable = null;
+            }
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            rect.set(0, 0, getWidth(), getHeight());
+            canvas.drawRoundRect(rect, AndroidUtilities.dp(10), AndroidUtilities.dp(10), bgPaint);
+
+            if (iconDrawable != null) {
+                int pad = AndroidUtilities.dp(8);
+                iconDrawable.setBounds(pad, pad, getWidth() - pad, getHeight() - pad);
+                iconDrawable.draw(canvas);
+            }
+        }
     }
 
     private class ListAdapter extends RecyclerListView.SelectionAdapter {
@@ -546,34 +801,27 @@ public class NGSettingsActivity extends BaseFragment {
 
         @Override
         public int getItemCount() {
-            if (isSearching) {
-                return searchResults.size();
-            }
             return rowCount;
         }
 
         @Override
         public boolean isEnabled(RecyclerView.ViewHolder holder) {
-            if (isSearching) {
-                return true;
+            int type = holder.getItemViewType();
+            return type == 1 || type == 2;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            if (position == headerStealth || position == headerMessaging || position == headerSecurity ||
+                position == headerOptimization || position == headerInternational || position == headerSystem) {
+                return 0; // Header
+            } else if (position == rowStorageDoctor || position == rowResetDefaults) {
+                return 2; // TextSettingsCell
+            } else if (position == footerCopyrightRow) {
+                return 3; // Footer Info
+            } else {
+                return 1; // NGFeatureCell
             }
-            int pos = holder.getAdapterPosition();
-            if (currentType == TYPE_FEATURES_HUB) {
-                if (pos == hubRowAnonymousStories || pos == hubRowStorySaver || pos == hubRowGhostMaster ||
-                    pos == hubRowForwardNoQuote || pos == hubRowAntiDelete || pos == hubRowConfirmActions ||
-                    pos == hubRowShowIdDc || pos == hubRowResetDefaults || pos == hubRowStudio) {
-                    return true;
-                }
-                GhostModeManager gm = GhostModeManager.getInstance();
-                return gm.isGhostModeEnabled() && (pos == hubRowHideTyping || pos == hubRowHideOnline || pos == hubRowHideReadReceipts);
-            } else if (currentType == TYPE_GHOST_MODE) {
-                if (pos == masterSwitchRow) return true;
-                GhostModeManager gm = GhostModeManager.getInstance();
-                return gm.isGhostModeEnabled() && (pos == hideTypingRow || pos == hideOnlineRow || pos == hideReadReceiptsRow || pos == hideForwardTagRow);
-            } else if (currentType == TYPE_ANTI_DELETE) {
-                return pos == masterSwitchRow;
-            }
-            return false;
         }
 
         @NonNull
@@ -585,21 +833,16 @@ public class NGSettingsActivity extends BaseFragment {
                     view = new HeaderCell(mContext);
                     view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
                     break;
-                case 1:
-                    view = new TextCheckCell(mContext);
-                    view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
-                    break;
                 case 2:
-                    view = new TextDetailSettingsCell(mContext);
-                    view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
-                    break;
-                case 4:
                     view = new TextSettingsCell(mContext);
                     view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
                     break;
                 case 3:
-                default:
                     view = new TextInfoPrivacyCell(mContext);
+                    break;
+                case 1:
+                default:
+                    view = new NGFeatureCell(mContext);
                     break;
             }
             return new RecyclerListView.Holder(view);
@@ -607,175 +850,158 @@ public class NGSettingsActivity extends BaseFragment {
 
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-            GhostModeManager gm = GhostModeManager.getInstance();
             NayaConfig cfg = NayaConfig.getInstance();
-
-            if (isSearching) {
-                if (position >= 0 && position < searchResults.size()) {
-                    SearchItem item = searchResults.get(position);
-                    if (item.isCheck) {
-                        TextCheckCell checkCell = (TextCheckCell) holder.itemView;
-                        boolean checked = false;
-                        switch (item.id) {
-                            case 1: checked = gm.isGhostModeEnabled(); break;
-                            case 2: checked = gm.isHideTypingStatus(); break;
-                            case 3: checked = gm.isHideOnlineStatus(); break;
-                            case 4: checked = gm.isHideReadReceipts(); break;
-                            case 5: checked = cfg.isAnonymousStories(); break;
-                            case 6: checked = cfg.isStorySaverEnabled(); break;
-                            case 7: checked = cfg.isForwardWithoutQuote(); break;
-                            case 8: checked = AntiDeleteManager.getInstance().isAntiDeleteEnabled(); break;
-                            case 9: checked = cfg.isConfirmActions(); break;
-                            case 10: checked = cfg.isShowIdAndDc(); break;
-                        }
-                        checkCell.setTextAndCheck(item.title, checked, position != searchResults.size() - 1);
-                    } else {
-                        TextSettingsCell textCell = (TextSettingsCell) holder.itemView;
-                        textCell.setTextAndValue(item.title, item.subtitle, position != searchResults.size() - 1);
-                    }
+            int type = holder.getItemViewType();
+            if (type == 0) {
+                HeaderCell h = (HeaderCell) holder.itemView;
+                if (position == headerStealth) h.setText("Account & Verification");
+                else if (position == headerMessaging) h.setText("Messaging & Tools");
+                else if (position == headerSecurity) h.setText("Security & Protection");
+                else if (position == headerOptimization) h.setText("Optimization");
+                else if (position == headerInternational) h.setText("International");
+                else if (position == headerSystem) h.setText("System");
+            } else if (type == 1) {
+                NGFeatureCell c = (NGFeatureCell) holder.itemView;
+                if (position == rowVerifiedBadge) {
+                    c.setFeature(
+                        R.drawable.outline_shield_check,
+                        0xFF0284C7,
+                        "User Profile Verified Badge",
+                        "Visual badge for profile (Internal NayaGram feature, not official/govt)",
+                        cfg.isVerifiedBadgeEnabled(),
+                        true
+                    );
+                } else if (position == rowChannelVerifiedBadge) {
+                    c.setFeature(
+                        R.drawable.msg_channel,
+                        0xFF7C3AED,
+                        "Channel & Group Verified Badge",
+                        "Visual badge for channels & groups (Internal NayaGram feature, not official/govt)",
+                        cfg.isChannelVerifiedBadgeEnabled(),
+                        true
+                    );
+                } else if (position == rowBotVerifiedBadge) {
+                    c.setFeature(
+                        R.drawable.msg_bot,
+                        0xFF10B981,
+                        "Bot Verified Badge",
+                        "Visual badge for bots (Internal NayaGram feature, not official/govt)",
+                        cfg.isBotVerifiedBadgeEnabled(),
+                        true
+                    );
+                } else if (position == rowRadiantOnlineAura) {
+                    c.setFeature(R.drawable.verified_profile, 0xFF10B981, "Radiant Online Aura", "Bold 'Online' status with rainbow cycling indicator light (Green, Blue, Cyan, Purple).", cfg.isRadiantOnlineAuraEnabled(), true);
+                } else if (position == rowStealthOfflinePresence) {
+                    c.setFeature(R.drawable.ic_naya_eye_off, 0xFF00E5FF, "Stealth Offline Presence", "Bold 'Offline' status tag in vivid Cyan for high contrast in dark/light themes.", cfg.isStealthOfflinePresenceEnabled(), true);
+                } else if (position == rowApkBlock) {
+                    c.setFeature(R.drawable.outline_shield_check, 0xFF00D4FF, "APK & ZIP Security Shield", "Blocks APK and ZIP files sent by others. Off by default.", cfg.isApkBlockEnabled(), true);
+                } else if (position == rowHidePhoneNumber) {
+                    c.setFeature(R.drawable.ic_naya_eye_off, 0xFF6366F1, "Screen Share Phone Privacy", "Blur & mask personal phone number with blue-purple background and eye toggle", cfg.isHidePhoneNumberEnabled(), true);
+                } else if (position == rowThemeMode) {
+                    int mode = cfg.getAppThemeMode();
+                    String modeName = mode == NayaConfig.THEME_MODE_LIGHT ? "Light Slate" : (mode == NayaConfig.THEME_MODE_NEON_AURORA ? "Naya Neon Aurora (Cyan-Purple)" : "Dark Slate Blue");
+                    c.setActionFeature(R.drawable.msg_theme, 0xFF8B5CF6, "Naya Theme Mode", modeName, true);
+                } else if (position == rowSmartAutoReply) {
+                    boolean active = org.telegram.messenger.AutoReplyManager.getInstance().isAutoReplyEnabled();
+                    c.setActionFeature(R.drawable.ic_naya_robot, 0xFF10B981, "Auto answer", active ? "Active • Replies once automatically" : "Automatically reply once to the first message", true);
+                } else if (position == rowTextStyle) {
+                    String styleName = org.nayagram.platform.textstyle.NGTextStyleHelper.getSelectedStyleName();
+                    c.setActionFeature(R.drawable.msg_text_outlined, 0xFF0EA5E9, "Text style", "Active: " + styleName + " • Tap to choose Bold, Italic, Mono, Spoiler, Quote", true);
+                } else if (position == rowOneTimeVoiceVideo) {
+                    c.setFeature(R.drawable.menu_feature_voice, 0xFF0284C7, "One-time voice & video", "Send voice messages and round videos as view-once by default", cfg.isOneTimeVoiceVideoEnabled(), true);
+                } else if (position == rowVoiceChanger) {
+                    String activeVoiceMode = org.nayagram.platform.audio.NGVoiceChangerManager.getModeTitle(
+                            org.nayagram.platform.audio.NGVoiceChangerManager.getSelectedMode(getParentActivity())
+                    );
+                    c.setActionFeature(R.drawable.menu_feature_voice, 0xFF7C3AED, "Voice Changer (Voice Notes)", "Active: " + activeVoiceMode + " • Tap to change effect", true);
+                } else if (position == rowVideoShape && rowVideoShape != -1) {
+                    c.setActionFeature(R.drawable.menu_feature_voice, 0xFFEC4899, "Video Message Shapes", cfg.getVideoShapeName(cfg.getVideoShape()), true);
+                } else if (position == rowAutoAddText) {
+                    c.setFeature(R.drawable.msg_edit, 0xFF8B5CF6, "Auto-add text", "Append your text to every message you send", cfg.isAutoAddTextEnabled(), true);
+                } else if (position == rowEditText) {
+                    c.setActionFeature(R.drawable.msg_settings_old, 0xFF10B981, "Edit text", cfg.getAutoAddText(), false);
+                } else if (position == rowSmartChatFolders) {
+                    c.setActionFeature(R.drawable.outline_groups_24, 0xFF10B981, "Smart Chat Folders", "Create and manage Telegram chat folders", false);
+                } else if (position == rowAntiDelete) {
+                    c.setFeature(R.drawable.msg_delete, 0xFF0284C7, "Anti-Delete Messages", "Keep deleted messages in chat with cyan indicator", cfg.isPreventMessageDeletionEnabled(), true);
+                } else if (position == rowEditHistory) {
+                    c.setFeature(R.drawable.msg_edit, 0xFF6366F1, "Message Edit History Log", "Capture & view original and previous edited versions of messages. Off by default.", cfg.isSaveEditHistoryEnabled(), true);
+                } else if (position == rowShowIdDc) {
+                    c.setFeature(R.drawable.ic_naya_info, 0xFF1565C0, "User ID & DC Display", "Show Telegram ID & DataCenter in profile", cfg.isShowIdAndDc(), true);
+                } else if (position == rowBiometricLocker) {
+                    c.setFeature(R.drawable.ic_naya_fingerprint, 0xFF10B981, "Biometric Chat Locker", "Protect selected chats with fingerprint, face unlock, or device screen lock", cfg.isBiometricChatLockerEnabled(), true);
+                } else if (position == rowFocusMode) {
+                    c.setFeature(R.drawable.outline_profile_mute_24, 0xFF64748B, "Focus & Wellbeing Mode · SOON", "Not active yet · Notification scheduling is not connected", false, true);
+                } else if (position == rowBatterySaver) {
+                    c.setFeature(R.drawable.outline_profile_stop_24, 0xFF64748B, "Ultra Battery Saver · SOON", "Not active yet · Battery-aware controls are not connected", false, true);
+                } else if (position == rowInstantTranslator) {
+                    c.setFeature(R.drawable.outline_ai_translate2, 0xFF64748B, "In-Chat Instant Translator · SOON", "Not active yet · No translation action is connected", false, false);
+                } else if (position == rowIntlClock) {
+                    c.setFeature(R.drawable.outline_message_time_24, 0xFF0288D1, "24-hour clock", "Show 13:45 instead of 1:45 PM", cfg.isInternationalClock(), true);
+                } else if (position == rowLinkGuard) {
+                    c.setFeature(R.drawable.media_link_24, 0xFFD32F2F, "Check unknown links", "Ask before opening a website that is not Telegram", cfg.isLinkGuardEnabled(), true);
+                } else if (position == rowReadableText) {
+                    c.setFeature(R.drawable.settings_language, 0xFF5E35B1, "Larger text", "Easier reading for mixed languages", cfg.isReadableTextEnabled(), true);
+                } else if (position == rowReduceMotion) {
+                    c.setFeature(R.drawable.settings_power, 0xFF64748B, "Reduce motion", "Fewer animations, easier on the eyes", cfg.isReduceMotion(), true);
+                } else if (position == rowChatListDetails) {
+                    c.setFeature(R.drawable.settings_chat, 0xFF0284C7, "Chat list details", "Three lines so chats are easier to scan", cfg.isChatListDetails(), true);
+                } else if (position == rowPauseGifs) {
+                    c.setFeature(R.drawable.settings_data, 0xFF7C3AED, "Pause GIFs", "GIFs stay still until you open them", cfg.isPauseGifAutoplay(), true);
+                } else if (position == rowSaveData) {
+                    c.setFeature(R.drawable.settings_data, 0xFF059669, "Save mobile data", "Download photos and videos only when opened", cfg.isSaveMobileData(), false);
                 }
-                return;
-            }
-
-            switch (holder.getItemViewType()) {
-                case 0:
-                    HeaderCell headerCell = (HeaderCell) holder.itemView;
-                    if (currentType == TYPE_FEATURES_HUB) {
-                        if (position == hubHeaderStories) {
-                            headerCell.setText("Story Features");
-                        } else if (position == hubHeaderStealth) {
-                            headerCell.setText("Ghost & Stealth Settings");
-                        } else if (position == hubHeaderMessaging) {
-                            headerCell.setText("Chat & Message Tools");
-                        } else if (position == hubHeaderProtection) {
-                            headerCell.setText("Protection & Confirmation");
-                        } else if (position == hubHeaderStudio) {
-                            headerCell.setText("NG Studio / Developer");
-                        }
-                    } else if (currentType == TYPE_GHOST_MODE) {
-                        headerCell.setText("Stealth Privacy Options");
-                    } else if (currentType == TYPE_STUDIO) {
-                        headerCell.setText("Diagnostic Information");
-                    } else {
-                        headerCell.setText("Message Protection");
-                    }
-                    break;
-                case 1:
-                    TextCheckCell checkCell = (TextCheckCell) holder.itemView;
-                    if (currentType == TYPE_FEATURES_HUB) {
-                        if (position == hubRowAnonymousStories) {
-                            checkCell.setTextAndCheck("Anonymous Story Viewing", cfg.isAnonymousStories(), true);
-                        } else if (position == hubRowStorySaver) {
-                            checkCell.setTextAndCheck("Enable Story Saver", cfg.isStorySaverEnabled(), false);
-                        } else if (position == hubRowGhostMaster) {
-                            checkCell.setTextAndCheck("Ghost Mode Master Switch", gm.isGhostModeEnabled(), true);
-                        } else if (position == hubRowHideTyping) {
-                            checkCell.setTextAndCheck("Hide Typing Status", gm.isHideTypingStatus(), true);
-                            checkCell.setEnabled(gm.isGhostModeEnabled(), null);
-                        } else if (position == hubRowHideOnline) {
-                            checkCell.setTextAndCheck("Hide Online Status", gm.isHideOnlineStatus(), true);
-                            checkCell.setEnabled(gm.isGhostModeEnabled(), null);
-                        } else if (position == hubRowHideReadReceipts) {
-                            checkCell.setTextAndCheck("Hide Read Receipts", gm.isHideReadReceipts(), false);
-                            checkCell.setEnabled(gm.isGhostModeEnabled(), null);
-                        } else if (position == hubRowForwardNoQuote) {
-                            checkCell.setTextAndCheck("Forward Without Quote", cfg.isForwardWithoutQuote(), true);
-                        } else if (position == hubRowAntiDelete) {
-                            checkCell.setTextAndCheck("Enable Anti-Delete", AntiDeleteManager.getInstance().isAntiDeleteEnabled(), false);
-                        } else if (position == hubRowConfirmActions) {
-                            checkCell.setTextAndCheck("Confirm Calls & Audio Notes", cfg.isConfirmActions(), true);
-                        } else if (position == hubRowShowIdDc) {
-                            checkCell.setTextAndCheck("Show User ID & Datacenter", cfg.isShowIdAndDc(), true);
-                        }
-                    } else if (currentType == TYPE_GHOST_MODE) {
-                        if (position == masterSwitchRow) {
-                            checkCell.setTextAndCheck("Enable Ghost Mode", gm.isGhostModeEnabled(), true);
-                        } else if (position == hideTypingRow) {
-                            checkCell.setTextAndCheck("Hide Typing Status", gm.isHideTypingStatus(), true);
-                            checkCell.setEnabled(gm.isGhostModeEnabled(), null);
-                        } else if (position == hideOnlineRow) {
-                            checkCell.setTextAndCheck("Hide Online Status", gm.isHideOnlineStatus(), true);
-                            checkCell.setEnabled(gm.isGhostModeEnabled(), null);
-                        } else if (position == hideReadReceiptsRow) {
-                            checkCell.setTextAndCheck("Hide Read Receipts", gm.isHideReadReceipts(), true);
-                            checkCell.setEnabled(gm.isGhostModeEnabled(), null);
-                        } else if (position == hideForwardTagRow) {
-                            checkCell.setTextAndCheck("Hide Forward Tag", gm.isHideForwardTag(), false);
-                            checkCell.setEnabled(gm.isGhostModeEnabled(), null);
-                        }
-                    } else if (currentType == TYPE_ANTI_DELETE) {
-                        if (position == masterSwitchRow) {
-                            checkCell.setTextAndCheck("Enable Anti-Delete", AntiDeleteManager.getInstance().isAntiDeleteEnabled(), false);
-                        }
-                    }
-                    break;
-                case 2:
-                    TextDetailSettingsCell detailCell = (TextDetailSettingsCell) holder.itemView;
-                    if (currentType == TYPE_STUDIO) {
-                        if (position == studioAppIdRow) {
-                            detailCell.setTextAndValue("Telemetry Access", "Developer authorization verified", true);
-                        } else if (position == studioVersionRow) {
-                            detailCell.setTextAndValue("Client Build", "NayaGram for Android v1.0.0 (1)", true);
-                        } else if (position == studioLogsRow) {
-                            detailCell.setTextAndValue("Logging Level", "Standard / Release", true);
-                        }
-                    }
-                    break;
-                case 4:
-                    TextSettingsCell textCell = (TextSettingsCell) holder.itemView;
-                    if (position == hubRowResetDefaults) {
-                        textCell.setTextAndValue("Reset All Features", "Restore defaults", position != hubFooterCopyrightRow - 1);
-                    } else if (position == hubRowStudio) {
-                        textCell.setTextAndValue("NG Control Dashboard", "Authorized access only", true);
-                    }
-                    break;
-                case 3:
-                default:
-                    TextInfoPrivacyCell infoCell = (TextInfoPrivacyCell) holder.itemView;
-                    if (currentType == TYPE_FEATURES_HUB) {
-                        if (position == hubFooterCopyrightRow) {
-                            infoCell.setText(createNayaCopyrightSpan());
-                        }
-                    } else if (currentType == TYPE_GHOST_MODE) {
-                        infoCell.setText("When Ghost Mode is enabled, contacts will not see you online or typing, and message reads will remain undisclosed.");
-                    } else if (currentType == TYPE_STUDIO) {
-                        infoCell.setText("NG Studio is restricted to authorized developer accounts for internal diagnostics and telemetry.");
-                    } else {
-                        infoCell.setText("Stores incoming messages locally to keep conversation continuity even if messages are removed by sender.");
-                    }
-                    break;
+            } else if (type == 2) {
+                TextSettingsCell t = (TextSettingsCell) holder.itemView;
+                if (position == rowStorageDoctor) {
+                    t.setText("🧹 Smart Storage Doctor", true);
+                } else if (position == rowResetDefaults) {
+                    t.setText("Restore Defaults", true);
+                }
+            } else if (type == 3) {
+                TextInfoPrivacyCell info = (TextInfoPrivacyCell) holder.itemView;
+                info.setText("NayaGram Platform · Built with ❤️ in Bangladesh");
             }
         }
+    }
 
-        @Override
-        public int getItemViewType(int position) {
-            if (isSearching) {
-                if (position >= 0 && position < searchResults.size()) {
-                    return searchResults.get(position).isCheck ? 1 : 4;
-                }
-                return 4;
+    private void showVideoShapePickerDialog() {
+        if (getParentActivity() == null) return;
+        final CharSequence[] options = new CharSequence[]{
+            "Circle ⭕ (Default)",
+            "Heart 💖 (Love & Passion)",
+            "Star ⭐ (5-Point Star)",
+            "Cat 🐱 (Pet Silhouette)",
+            "Flower 🌸 (6-Petal Blossom)",
+            "Cloud ☁️ (Soft Fluffy Cloud)",
+            "Living Blob 🫠 (Organic Dynamic Blob)",
+            "Ghost 👻 (Seasonal Ghost)"
+        };
+        final int[] shapeValues = new int[]{
+            NayaConfig.VIDEO_SHAPE_CIRCLE,
+            NayaConfig.VIDEO_SHAPE_HEART,
+            NayaConfig.VIDEO_SHAPE_STAR,
+            NayaConfig.VIDEO_SHAPE_CAT,
+            NayaConfig.VIDEO_SHAPE_FLOWER,
+            NayaConfig.VIDEO_SHAPE_CLOUD,
+            NayaConfig.VIDEO_SHAPE_BLOB,
+            NayaConfig.VIDEO_SHAPE_GHOST
+        };
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
+        builder.setTitle("Select Video Message Shape");
+        builder.setItems(options, (dialog, which) -> {
+            NayaConfig.getInstance().setVideoShape(shapeValues[which]);
+            if (listAdapter != null) {
+                if (rowVideoShape != -1) listAdapter.notifyItemChanged(rowVideoShape);
             }
-            if (currentType == TYPE_FEATURES_HUB) {
-                if (position == hubHeaderStories || position == hubHeaderStealth ||
-                    position == hubHeaderMessaging || position == hubHeaderProtection ||
-                    position == hubHeaderStudio) {
-                    return 0;
-                } else if (position == hubRowResetDefaults || position == hubRowStudio) {
-                    return 4;
-                } else if (position == hubFooterCopyrightRow) {
-                    return 3;
-                }
-                return 1;
-            } else if (position == headerRow || position == studioHeaderRow) {
-                return 0;
-            } else if (position == masterSwitchRow || position == hideTypingRow || position == hideOnlineRow || position == hideReadReceiptsRow || position == hideForwardTagRow) {
-                return 1;
-            } else if (position == studioAppIdRow || position == studioVersionRow || position == studioLogsRow) {
-                return 2;
-            } else if (position == hubRowAntiDelete || position == hubRowStorySaver) {
-                return 1;
-            }
-            return 3;
-        }
+            BulletinFactory.of(NGSettingsActivity.this).createSimpleBulletin(
+                R.raw.done,
+                "Video Message Shape: " + NayaConfig.getInstance().getVideoShapeName(shapeValues[which])
+            ).show();
+            dialog.dismiss();
+        });
+        builder.setNegativeButton("Cancel", null);
+        showDialog(builder.create());
     }
 }

@@ -1,0 +1,438 @@
+package org.nayagram.platform.security;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.os.SystemClock;
+
+import androidx.security.crypto.EncryptedSharedPreferences;
+import androidx.security.crypto.MasterKey;
+
+import dev.samstevens.totp.code.DefaultCodeGenerator;
+import dev.samstevens.totp.code.DefaultCodeVerifier;
+import dev.samstevens.totp.secret.DefaultSecretGenerator;
+import dev.samstevens.totp.time.SystemTimeProvider;
+
+import org.telegram.messenger.FileLog;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+/**
+ * Local-only RFC 6238 TOTP authentication layer (NG Authenticator / NGSafety).
+ * No Google API or network request is used.
+ * Privacy Policy: Local TOTP only, no data sent to Google server.
+ * The TOTP secret and one-time backup-code hashes are stored in encrypted preferences.
+ */
+public final class NGSafety {
+    private static final String PREFS = "ng_safety_secure";
+    private static final String LEGACY_PREFS = "nayagram_guard_secure";
+    private static final String ENABLED = "enabled";
+    private static final String KEY_TOTP_SECRET = "totp_secret";
+    private static final String KEY_PENDING_SECRET = "pending_secret";
+    private static final String BACKUP_PREFIX = "backup_hash_";
+    private static final int BACKUP_COUNT = 15;
+    private static final String BACKUP_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    public static final String KEY_AUTOLOCK_MINUTES = "autolock_minutes";
+    private static final String KEY_LAST_BG_TIME = "last_bg_time";
+    private static final String KEY_LAST_VERIFIED_TIME = "last_verified_time";
+    private static final String KEY_SESSION_VERIFIED = "session_verified";
+    public static final int DEFAULT_AUTOLOCK_MINUTES = 5; // 5 minutes default
+    private static volatile long backgroundElapsedRealtime = 0L;
+    private static volatile SharedPreferences cachedPreferences;
+
+    private static volatile boolean sessionVerified;
+
+    private NGSafety() {}
+
+    private static SharedPreferences prefs(Context context) throws Exception {
+        SharedPreferences cached = cachedPreferences;
+        if (cached != null) return cached;
+        synchronized (NGSafety.class) {
+            cached = cachedPreferences;
+            if (cached != null) return cached;
+            Context appContext = context.getApplicationContext();
+            MasterKey masterKey = new MasterKey.Builder(appContext)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build();
+            SharedPreferences primary = EncryptedSharedPreferences.create(
+                    appContext,
+                    PREFS,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM);
+
+            // Migrate seamlessly from legacy preferences if present.
+            if (!primary.contains(ENABLED)) {
+                try {
+                    SharedPreferences legacy = EncryptedSharedPreferences.create(
+                            appContext,
+                            LEGACY_PREFS,
+                            masterKey,
+                            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM);
+                    if (legacy.contains(ENABLED)) {
+                        SharedPreferences.Editor editor = primary.edit();
+                        for (java.util.Map.Entry<String, ?> entry : legacy.getAll().entrySet()) {
+                            Object val = entry.getValue();
+                            if (val instanceof Boolean) editor.putBoolean(entry.getKey(), (Boolean) val);
+                            else if (val instanceof String) editor.putString(entry.getKey(), (String) val);
+                            else if (val instanceof Integer) editor.putInt(entry.getKey(), (Integer) val);
+                            else if (val instanceof Long) editor.putLong(entry.getKey(), (Long) val);
+                            else if (val instanceof Float) editor.putFloat(entry.getKey(), (Float) val);
+                        }
+                        editor.apply();
+                    }
+                } catch (Throwable e) {
+                    // Do not cache an un-migrated store as disabled. Let the caller fail
+                    // closed and allow a later call to retry the legacy migration.
+                    throw new Exception("Failed to migrate legacy NG Safety preferences", e);
+                }
+            }
+            cachedPreferences = primary;
+            return primary;
+        }
+    }
+
+    public static boolean isEnabled(Context context) {
+        try {
+            return prefs(context).getBoolean(ENABLED, false);
+        } catch (Exception e) {
+            // Fail closed when encrypted state cannot be read.
+            return true;
+        }
+    }
+
+    public static boolean isSessionVerified() {
+        if (!sessionVerified) {
+            return false;
+        }
+        if (org.telegram.messenger.ApplicationLoader.applicationContext != null && isAutoLockExpired(org.telegram.messenger.ApplicationLoader.applicationContext)) {
+            lockSession(org.telegram.messenger.ApplicationLoader.applicationContext);
+            return false;
+        }
+        return true;
+    }
+
+    public static void markSessionVerified(Context context) {
+        sessionVerified = true;
+        try {
+            prefs(context).edit()
+                    .putBoolean(KEY_SESSION_VERIFIED, true)
+                    .putLong(KEY_LAST_VERIFIED_TIME, System.currentTimeMillis())
+                    .apply();
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+    }
+
+    /** Backward-compatible entry point for older callers that do not have a Context. */
+    public static void markSessionVerified() {
+        sessionVerified = true;
+        SharedPreferences cached = cachedPreferences;
+        if (cached != null) {
+            cached.edit().putBoolean(KEY_SESSION_VERIFIED, true)
+                    .putLong(KEY_LAST_VERIFIED_TIME, System.currentTimeMillis()).apply();
+        }
+    }
+
+    public static void lockSession(Context context) {
+        sessionVerified = false;
+        try {
+            prefs(context).edit().putBoolean(KEY_SESSION_VERIFIED, false)
+                    .remove(KEY_LAST_VERIFIED_TIME).apply();
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+    }
+
+    /** Backward-compatible entry point for older callers that do not have a Context. */
+    public static void lockSession() {
+        sessionVerified = false;
+        SharedPreferences cached = cachedPreferences;
+        if (cached != null) {
+            cached.edit().putBoolean(KEY_SESSION_VERIFIED, false)
+                    .remove(KEY_LAST_VERIFIED_TIME).apply();
+        }
+    }
+
+    public static int getAutoLockMinutes(Context context) {
+        try {
+            return prefs(context).getInt(KEY_AUTOLOCK_MINUTES, DEFAULT_AUTOLOCK_MINUTES);
+        } catch (Exception e) {
+            return DEFAULT_AUTOLOCK_MINUTES;
+        }
+    }
+
+    public static boolean setAutoLockMinutes(Context context, int minutes) {
+        if (minutes < 0 || minutes > 24 * 60) {
+            return false;
+        }
+        try {
+            // Changing the timeout happens while the user is in the foreground settings UI.
+            // Clear any stale background timestamp so the previous session's pause cannot
+            // immediately expire the newly selected duration on the next resume.
+            backgroundElapsedRealtime = 0L;
+            sessionVerified = true;
+            prefs(context).edit()
+                    .putInt(KEY_AUTOLOCK_MINUTES, minutes)
+                    .putLong(KEY_LAST_BG_TIME, 0L)
+                    .putBoolean(KEY_SESSION_VERIFIED, true)
+                    .putLong(KEY_LAST_VERIFIED_TIME, System.currentTimeMillis())
+                    .apply();
+            FileLog.d("NG Auto-lock preset saved: " + minutes + "min");
+            return getAutoLockMinutes(context) == minutes;
+        } catch (Exception e) {
+            FileLog.e(e);
+            return false;
+        }
+    }
+
+    public static String getAutoLockDisplayString(int minutes) {
+        if (minutes == 0) return "Never";
+        if (minutes == 15) return "15 minutes";
+        if (minutes == 45) return "45 minutes";
+        if (minutes == 60) return "1 hour";
+        if (minutes == 180) return "3 hours";
+        if (minutes == 300) return "5 hours";
+        if (minutes == 720) return "12 hours";
+        int hours = minutes / 60;
+        int mins = minutes % 60;
+        if (hours > 0 && mins > 0) return hours + "h " + mins + "m";
+        if (hours > 0) return hours + " hour" + (hours > 1 ? "s" : "");
+        return mins + (mins == 1 ? " minute" : " minutes");
+    }
+
+    public static void onAppBackground(Context context) {
+        if (!isEnabled(context)) return;
+        // Mirror Telegram's native passcode model: record when the app leaves the
+        // foreground, then evaluate the configured timeout on return. Do not use a
+        // delayed UI runnable to mutate the session while the app is backgrounded;
+        // stale/cancelled callbacks can race lifecycle transitions on some devices.
+        backgroundElapsedRealtime = SystemClock.elapsedRealtime();
+        try {
+            prefs(context).edit()
+                    .putLong(KEY_LAST_BG_TIME, System.currentTimeMillis())
+                    .putBoolean(KEY_SESSION_VERIFIED, sessionVerified)
+                    .apply();
+        } catch (Throwable e) {
+            FileLog.e(e);
+        }
+    }
+
+    public static void onAppForeground(Context context) {
+        // Process recreation resets the in-memory flag. Restore the persisted verified
+        // session only when its configured background interval has not expired.
+        boolean enabled = isEnabled(context);
+        boolean expired = enabled && isAutoLockExpired(context);
+        if (expired) {
+            lockSession(context);
+        } else if (enabled) {
+            try {
+                sessionVerified = prefs(context).getBoolean(KEY_SESSION_VERIFIED, false);
+                if (sessionVerified) {
+                    prefs(context).edit().putLong(KEY_LAST_VERIFIED_TIME, System.currentTimeMillis()).apply();
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+                sessionVerified = false;
+            }
+        } else {
+            sessionVerified = false;
+        }
+
+        backgroundElapsedRealtime = 0L;
+        try {
+            prefs(context).edit().putLong(KEY_LAST_BG_TIME, 0L).apply();
+        } catch (Throwable e) {
+            FileLog.e(e);
+            sessionVerified = false;
+        }
+    }
+
+    public static boolean isAutoLockExpired(Context context) {
+        if (!isEnabled(context)) return false;
+        int minutes = getAutoLockMinutes(context);
+        if (minutes == 0) return false;
+        try {
+            long lastBg = prefs(context).getLong(KEY_LAST_BG_TIME, 0L);
+            if (lastBg > 0) {
+                long elapsed;
+                long startedAtElapsed = backgroundElapsedRealtime;
+                if (startedAtElapsed > 0L) {
+                    // Wall-clock edits must not shorten or extend a live background timeout.
+                    elapsed = SystemClock.elapsedRealtime() - startedAtElapsed;
+                } else {
+                    // After process death, elapsedRealtime's old value is not available;
+                    // use the persisted wall-clock timestamp as a best-effort fallback.
+                    long now = System.currentTimeMillis();
+                    // If the wall clock moved backwards, fail closed instead of extending access.
+                    if (now < lastBg) return true;
+                    elapsed = now - lastBg;
+                }
+                return elapsed >= ((long) minutes * 60 * 1000L);
+            }
+            long lastVerified = prefs(context).getLong(KEY_LAST_VERIFIED_TIME, 0L);
+            if (lastVerified > 0L) {
+                long now = System.currentTimeMillis();
+                if (now < lastVerified) return true;
+                return (now - lastVerified) >= ((long) minutes * 60 * 1000L);
+            }
+        } catch (Throwable e) {
+            // A storage failure must never leave an already-verified session unlocked.
+            FileLog.e(e);
+            return true;
+        }
+        return false;
+    }
+
+    public static String beginSetup(Context context) throws Exception {
+        // The generator argument is Base32 characters: 32 characters = 160 bits of entropy.
+        String secret = new DefaultSecretGenerator(32).generate();
+        prefs(context).edit().putString(KEY_PENDING_SECRET, secret).apply();
+        return secret;
+    }
+
+    public static void cancelSetup(Context context) {
+        try {
+            prefs(context).edit().remove(KEY_PENDING_SECRET).apply();
+        } catch (Exception ignored) {
+            // A pending secret is never promoted to the active secret before confirmation.
+        }
+    }
+
+    public static String getPendingSecret(Context context) throws Exception {
+        return prefs(context).getString(KEY_PENDING_SECRET, null);
+    }
+
+    public static String getOtpAuthUri(String accountLabel, String secret) {
+        String user = accountLabel == null || accountLabel.trim().isEmpty() ? "user" : accountLabel.trim();
+        // Keep the issuer/account separator colon literal as required by otpauth URI labels.
+        String label = "NayaGram:" + urlEncode(user);
+        return "otpauth://totp/" + label + "?secret=" + urlEncode(secret)
+                + "&issuer=" + urlEncode("NayaGram") + "&algorithm=SHA1&digits=6&period=30";
+    }
+
+    private static String urlEncode(String value) {
+        try {
+            return java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20");
+        } catch (Exception e) {
+            return value;
+        }
+    }
+
+    public static boolean verifyCode(String secret, String code) {
+        if (secret == null || code == null || !code.matches("\\d{6}")) {
+            return false;
+        }
+        try {
+            DefaultCodeVerifier verifier = new DefaultCodeVerifier(new DefaultCodeGenerator(), new SystemTimeProvider());
+            verifier.setTimePeriod(30);
+            verifier.setAllowedTimePeriodDiscrepancy(1);
+            return verifier.isValidCode(secret, code);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Completes enrollment only after a valid live TOTP code is entered.
+     * Returns fifteen one-time backup codes; only their SHA-256 hashes are retained.
+     */
+    public static List<String> confirmSetup(Context context, String code) throws Exception {
+        SharedPreferences secure = prefs(context);
+        String secret = secure.getString(KEY_PENDING_SECRET, null);
+        if (secret == null || !verifyCode(secret, code)) {
+            return null;
+        }
+        ArrayList<String> backupCodes = new ArrayList<>(BACKUP_COUNT);
+        SharedPreferences.Editor editor = secure.edit().putString(KEY_TOTP_SECRET, secret).remove(KEY_PENDING_SECRET);
+        SecureRandom random = new SecureRandom();
+        Set<String> uniqueCodes = new HashSet<>();
+        while (uniqueCodes.size() < BACKUP_COUNT) {
+            StringBuilder raw = new StringBuilder(10);
+            for (int j = 0; j < 10; j++) {
+                raw.append(BACKUP_ALPHABET.charAt(random.nextInt(BACKUP_ALPHABET.length())));
+            }
+            uniqueCodes.add(raw.toString());
+        }
+        int index = 0;
+        for (String display : uniqueCodes) {
+            backupCodes.add(display);
+            editor.putString(BACKUP_PREFIX + index++, sha256(display));
+        }
+        editor.putBoolean(ENABLED, true).putBoolean(KEY_SESSION_VERIFIED, true)
+                .putLong(KEY_LAST_VERIFIED_TIME, System.currentTimeMillis()).apply();
+        markSessionVerified(context);
+        return backupCodes;
+    }
+
+    public static boolean verifyStoredCode(Context context, String code) {
+        try {
+            SharedPreferences secure = prefs(context);
+            if (!secure.getBoolean(ENABLED, false)) {
+                return true;
+            }
+            String secret = secure.getString(KEY_TOTP_SECRET, null);
+            if (verifyCode(secret, code)) {
+                markSessionVerified(context);
+                return true;
+            }
+            if (code == null || code.length() < 6 || code.length() > 10) {
+                return false;
+            }
+            String candidate = sha256(code.trim().toUpperCase(Locale.US));
+            for (int i = 0; i < BACKUP_COUNT; i++) {
+                String stored = secure.getString(BACKUP_PREFIX + i, null);
+                if (stored != null && constantTimeEquals(stored, candidate)) {
+                    secure.edit().remove(BACKUP_PREFIX + i).apply();
+                    markSessionVerified(context);
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static void disable(Context context) throws Exception {
+        SharedPreferences secure = prefs(context);
+        // Keep the user's auto-lock preference when disabling the authenticator;
+        // only secrets, backup hashes, and other guard state are cleared.
+        int autoLockMinutes = secure.getInt(KEY_AUTOLOCK_MINUTES, DEFAULT_AUTOLOCK_MINUTES);
+        SharedPreferences.Editor editor = secure.edit().clear();
+        editor.putInt(KEY_AUTOLOCK_MINUTES, autoLockMinutes).apply();
+        try {
+            MasterKey masterKey = new MasterKey.Builder(context.getApplicationContext())
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build();
+            SharedPreferences legacy = EncryptedSharedPreferences.create(
+                    context.getApplicationContext(),
+                    LEGACY_PREFS,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM);
+            legacy.edit().clear().apply();
+        } catch (Throwable ignored) {}
+        lockSession();
+    }
+
+    private static String sha256(String value) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+        StringBuilder out = new StringBuilder(digest.length * 2);
+        for (byte b : digest) {
+            out.append(String.format(Locale.US, "%02x", b & 0xff));
+        }
+        return out.toString();
+    }
+
+    private static boolean constantTimeEquals(String a, String b) {
+        return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+    }
+}
