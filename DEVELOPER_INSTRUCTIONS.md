@@ -1,15 +1,16 @@
-# 🚀 NayaGram Android (Open-Source Build Guide)
+# 🚀 NayaGram Android — Developer & Contributor Build Guide
 
-This guide explains how open-source contributors, security researchers, and reviewers can build **NayaGram Android** (`org.nayagram.platform`, currently synced at `v4.26.75 NG` / Build `4097`) from `NayaGramPlatform/NayaGram-Client`.
+Complete instructions for building **NayaGram Android** (`org.nayagram.platform`, **v4.26.75 NG / Build 4097**) from [**NayaGramPlatform/NayaGram-Client**](https://github.com/NayaGramPlatform/NayaGram-Client).
 
 ---
 
 ## 🛠️ 1. System Requirements & Prerequisites
-* **Operating System:** Linux, macOS, or Windows (WSL2 recommended for Windows)
-* **JDK:** OpenJDK 17 or Temurin JDK 17 (`JAVA_HOME` set to JDK 17)
-* **Android Studio:** Android Studio 2024.2+ (Ladybug / Meerkat / 2025.1+)
-* **Android SDK & NDK:**
-  - Android SDK Platform `36`
+
+* **Operating System:** Linux, macOS, or Windows (WSL2 recommended)
+* **JDK:** OpenJDK 17 or Temurin JDK 17 (`JAVA_HOME` configured to JDK 17)
+* **Android Studio:** Android Studio 2025.1+
+* **Android SDK & Native Tooling:**
+  - Android SDK Platform: `36`
   - Android SDK Build-Tools: `36.0.0`
   - CMake: `3.22.1`
   - Android NDK: `27.2.12479018`
@@ -17,14 +18,15 @@ This guide explains how open-source contributors, security researchers, and revi
 ---
 
 ## 📥 2. Cloning the Repository (Submodules Required)
-NayaGram relies on native C++ libraries (BoringSSL, FFmpeg, Libvpx, WebRTC, tgcalls, tdlib, Media3). Clone with `--recursive`:
+
+NayaGram uses native C++ libraries (`boringssl`, `ffmpeg`, `libvpx`, `tgcalls`, `tdlib`, `media3`, etc.). Always clone with `--recursive`:
 
 ```bash
 git clone --recursive https://github.com/NayaGramPlatform/NayaGram-Client.git
 cd NayaGram-Client
 ```
 
-*(If you already cloned without submodules, run:)*
+*(If you already cloned without submodules, initialize them via:)*
 ```bash
 git submodule sync --recursive
 git submodule update --init --recursive
@@ -32,25 +34,29 @@ git submodule update --init --recursive
 
 ---
 
-## ⚙️ 3. Environment & Credentials Configuration
-For security, no private API keys, Firebase credentials, or signing keystores are stored in this repository.
+## ⚙️ 3. Credentials & Local Environment Setup
+
+For security, private API keys, Firebase configs, and signing keystores are never hardcoded into source code.
 
 1. **Create `local.properties`** in the project root:
    ```properties
    sdk.dir=/path/to/your/Android/Sdk
    ndk.dir=/path/to/your/Android/Sdk/ndk/27.2.12479018
    ```
-2. **Supply Telegram API Credentials (`my.telegram.org`):**
-   `TMessagesProj/build.gradle` reads `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from environment variables or Gradle `-P` properties:
+
+2. **Get & Set Telegram API Credentials:**
+   Log in at [**https://my.telegram.org**](https://my.telegram.org) (see [**API ID instructions**](https://core.telegram.org/api/obtaining_api_id)) to obtain your own `api_id` and `api_hash`, then export them or pass them as Gradle `-P` flags:
    ```bash
    export TELEGRAM_API_ID=YOUR_API_ID
    export TELEGRAM_API_HASH=YOUR_API_HASH
    ```
-3. **Firebase & Maps Placeholders:**
-   - Public placeholder `google-services.json` files are included so Gradle configures cleanly out of the box. Replace them with your own Firebase project config for FCM push notifications.
-   - Replace `YOUR_GOOGLE_MAPS_API_KEY` in `TMessagesProj/config/*/AndroidManifest*.xml` with your own Maps key if needed.
-4. **Signing Keystore (for Release builds):**
-   Provide your keystore via environment variables or `-P` flags:
+
+3. **Firebase & Maps Configuration:**
+   - Replace `google-services.json` in `TMessagesProj_App/` and sibling app modules with your own Firebase project file if you need FCM push notifications.
+   - Replace `com.google.android.maps.v2.API_KEY` inside `TMessagesProj/config/*/AndroidManifest*.xml` with your own Google Maps Android API key if map previews are needed.
+
+4. **Signing Keystore (for Release APK / AAB builds):**
+   Supply your keystore via environment variables or `-P` flags:
    ```bash
    export RELEASE_KEYSTORE_PATH=/path/to/your-release.jks
    export RELEASE_STORE_PASSWORD=your_store_password
@@ -62,21 +68,20 @@ For security, no private API keys, Firebase credentials, or signing keystores ar
 
 ## 🔨 4. Building via Command Line
 
-### A. Build Universal Release APK:
-```bash
-./gradlew :TMessagesProj_App:assembleAfatRelease
-```
-
-### B. Build Google Play Release AAB Bundle:
-```bash
-./gradlew :TMessagesProj_App:bundleBundleAfat_SDK23Release
-```
+* **Build Universal Release APK:**
+  ```bash
+  ./gradlew :TMessagesProj_App:assembleAfatRelease
+  ```
+* **Build Google Play Release AAB (SDK 24+):**
+  ```bash
+  ./gradlew :TMessagesProj_App:bundleBundleAfat_SDK23Release
+  ```
 
 ---
 
 ## 💻 5. Opening in Android Studio
-1. Open Android Studio.
-2. Select **"Open"** (do **NOT** choose "Import").
-3. Select the `NayaGram-Client` root folder.
-4. Wait for Gradle Sync to complete (ensure `TELEGRAM_API_ID` & `TELEGRAM_API_HASH` are set in environment or `gradle.properties` locally without committing them).
-5. In the Build Variants tool window, select module `:TMessagesProj_App` and variant `afatDebug` or `afatRelease`.
+
+1. Open **Android Studio** and select **Open** *(do **not** choose Import)*.
+2. Select the `NayaGram-Client` root folder and wait for Gradle Sync to finish.
+3. Ensure `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are available in your environment or `local` Gradle properties *(never commit secrets to Git)*.
+4. In **Build Variants**, select `:TMessagesProj_App` → `afatDebug` or `afatRelease` and run.

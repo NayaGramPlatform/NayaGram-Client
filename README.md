@@ -1,11 +1,11 @@
-𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦 
-# 💎 NayaGram Messenger for Android (Open-Source Client)
+<div align="center">
 
-<p align="center">
-  <img src="https://i.postimg.cc/65K5k2WS/%F0%9D%90%8D%F0%9D%90%9A%F0%9D%90%B2%F0%9D%90%9A-%F0%9D%90%86%F0%9D%90%AB%F0%9D%90%9A%F0%9D%90%A6-%F0%9D%90%8F%F0%9D%90%A5%F0%9D%90%9A%F0%9D%90%AD%F0%9D%90%9F%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%A6.png" width="160" alt="𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦 Logo" />
-</p>
+# 💎 NayaGram Messenger for Android
+### Official Open-Source Client Repository (`NayaGram-Client`)
 
-<p align="center">
+<img src="https://i.postimg.cc/65K5k2WS/%F0%9D%90%8D%F0%9D%90%9A%F0%9D%90%B2%F0%9D%90%9A-%F0%9D%90%86%F0%9D%90%AB%F0%9D%90%9A%F0%9D%90%A6-%F0%9D%90%8F%F0%9D%90%A5%F0%9D%90%9A%F0%9D%90%AD%F0%9D%90%9F%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%A6.png" width="160" alt="NayaGram Platform Logo" />
+
+<p>
   <a href="https://t.me/NayaGramPro"><img src="https://img.shields.io/badge/Telegram-@NayaGramPro-2CA5E0?style=flat-square&logo=telegram&logoColor=white" alt="Telegram"/></a>
   <a href="https://x.com/NayaGramPro"><img src="https://img.shields.io/badge/Twitter%20%2F%20X-@NayaGramPro-000000?style=flat-square&logo=x&logoColor=white" alt="Twitter"/></a>
   <a href="https://youtube.com/@NayaGramPro"><img src="https://img.shields.io/badge/YouTube-@NayaGramPro-FF0000?style=flat-square&logo=youtube&logoColor=white" alt="YouTube"/></a>
@@ -13,63 +13,78 @@
   <a href="mailto:support.nayagram@gmail.com"><img src="https://img.shields.io/badge/Email-support.nayagram@gmail.com-D14836?style=flat-square&logo=gmail&logoColor=white" alt="Support Email"/></a>
 </p>
 
-[NayaGram](https://t.me/NayaGramPro) is an independent, privacy-focused Telegram API client for Android built on the official open-source Telegram Android codebase.
+</div>
 
-This repository (`NayaGramPlatform/NayaGram-Client`) contains the official public open-source code corresponding to the NayaGram Android release:
-- **Application ID (Google Play):** `org.nayagram.platform`
-- **Current Synced Version:** `v4.26.75 NG` (Internal Build Code: `4097`)
-- **License:** [GNU General Public License v2.0 or later](LICENSE)
+[**NayaGram**](https://t.me/NayaGramPro) is an independent, fast, and privacy-focused messaging client for Android built on the official open-source Telegram Android codebase.
+
+This repository ([**NayaGramPlatform/NayaGram-Client**](https://github.com/NayaGramPlatform/NayaGram-Client)) hosts the public open-source code for **NayaGram for Android**.
+
+| Property | Value |
+| :--- | :--- |
+| **Application ID (Google Play)** | `org.nayagram.platform` ([**View on Google Play**](https://play.google.com/store/apps/details?id=org.nayagram.platform)) |
+| **Current Version** | `v4.26.75 NG` (**Build `4097`**) |
+| **License** | [**GNU General Public License v2.0 or later**](LICENSE) |
+| **Privacy Policy** | [**NayaGram Privacy Policy**](https://nayagramplatform.github.io/PrivacyArticleCenter/) |
 
 ---
 
-## Notice for Telegram & Play Store Reviewers / Contributors
-- **Unofficial Client Disclosure:** NayaGram is an independent client application that uses the Telegram API under Telegram's Terms of Service and is not affiliated with Telegram FZ-LLC / Telegram Messenger Inc.
-- **Open-Source Security Hygiene:** Private API keys, `TELEGRAM_API_ID` / `TELEGRAM_API_HASH`, production `google-services.json`, Google Maps API keys, and signing keystores/passwords are **intentionally excluded or replaced with placeholders** in this public repository.
-- **Source Parity:** All application source code (`TMessagesProj`, `TMessagesProj_App`, native C++ submodules, and resources) matches the production `4.26.75 NG` (`4097`) build.
+## 📋 Disclosure & Compliance
+- **Unofficial Client Notice:** NayaGram is an independent third-party client powered by the Telegram API. It is not affiliated with Telegram FZ-LLC / Telegram Messenger Inc.
+- **Open-Source Security Hygiene:** Private API credentials (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`), production `google-services.json`, Google Maps API keys, and signing keystores/passwords are **intentionally excluded or replaced with safe placeholders**.
+- **Full Source Parity:** Application source code (`TMessagesProj`, `TMessagesProj_App`, native C++ submodules, and resources) matches the `v4.26.75 NG` (**Build `4097`**) release.
 
 ---
 
-## Creating & Building Your NayaGram Application
+## 🛠️ Creating & Building Your NayaGram Application
 
-Developers using this source code must comply with Telegram's developer guidelines and GPLv2+:
+Developers building from this source code must follow Telegram's API terms and the **GNU GPL v2+** license:
 
-1. [**Obtain your own `api_id` and `api_hash`**](https://core.telegram.org/api/obtaining_api_id) from `https://my.telegram.org`.
-2. Please **do not** use the name Telegram for your app — and clearly inform users that your app is unofficial.
-3. Please **do not** use Telegram's standard logo (white paper plane in a blue circle) as your app's logo.
-4. Study Telegram's [**security guidelines**](https://core.telegram.org/mtproto/security_guidelines) and protect your users' data and privacy.
-5. Publish **your** modified source code under GNU GPLv2+ to comply with the license.
+1. **Obtain your own `api_id` and `api_hash`** by logging in at [**https://my.telegram.org**](https://my.telegram.org) (see [**official guide**](https://core.telegram.org/api/obtaining_api_id)).
+2. **Do not** use the name *Telegram* for your app — clearly inform users that your application is an independent client.
+3. **Do not** reuse Telegram's official logo (white paper plane in a blue circle) as your application icon.
+4. Carefully follow Telegram's [**Security Guidelines**](https://core.telegram.org/mtproto/security_guidelines) to protect user data and privacy.
+5. Publish **your modified source code** under GNU GPL v2+ to remain compliant with the open-source license.
 
-### API & Protocol Documentation
-- Telegram API manuals: https://core.telegram.org/api  
-- MTProto protocol manuals: https://core.telegram.org/mtproto  
+### 📚 API & Protocol Documentation
+- **Telegram API Manuals:** [**https://core.telegram.org/api**](https://core.telegram.org/api)
+- **MTProto Protocol Manuals:** [**https://core.telegram.org/mtproto**](https://core.telegram.org/mtproto)
+- **API Key Portal:** [**https://my.telegram.org**](https://my.telegram.org)
 
-### Compilation Guide
-You will require **JDK 17**, **Android SDK 36**, **CMake 3.22.1**, and **Android NDK `27.2.12479018`**.
+---
 
-1. **Clone the source code with all native submodules:**
+## ⚙️ Compilation Guide
+
+### Prerequisites
+- **JDK 17** (Temurin / OpenJDK 17)
+- **Android Studio** 2025.1+
+- **Android SDK 36**, **Build-Tools `36.0.0`**, **CMake `3.22.1`**, and **Android NDK `27.2.12479018`**
+
+### Step-by-Step Setup
+
+1. **Clone the repository with all native submodules:**
    ```bash
    git clone --recursive --shallow-submodules https://github.com/NayaGramPlatform/NayaGram-Client.git NayaGram
    cd NayaGram
    ```
-   If you forgot `--recursive`, run:
+   *(If you forgot `--recursive`, run:)*
    ```bash
    git submodule sync --recursive
    git submodule update --init --recursive --depth=1
    ```
 
-2. **Configure Telegram API credentials** (injected at build time via `TMessagesProj/build.gradle` into `BuildConfig.TELEGRAM_APP_ID` / `BuildConfig.TELEGRAM_APP_HASH`):
-   Pass `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` as environment variables or Gradle `-P` flags:
+2. **Configure your Telegram API credentials:**  
+   Register your app at [**https://my.telegram.org**](https://my.telegram.org) to get your `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`, then supply them via environment variables or Gradle `-P` properties (`TMessagesProj/build.gradle` injects them automatically into `BuildConfig`):
    ```bash
    export TELEGRAM_API_ID=YOUR_API_ID
    export TELEGRAM_API_HASH=YOUR_API_HASH
    ```
 
-3. **Configure Firebase & Maps placeholders (optional for production push/maps):**
-   - Replace the placeholder `google-services.json` files (e.g. `TMessagesProj_App/google-services.json`, `TMessagesProj/google-services.json`) with your own Firebase Console configuration for `org.nayagram.platform`.
-   - Replace `YOUR_GOOGLE_MAPS_API_KEY` inside `TMessagesProj/config/*/AndroidManifest*.xml` with your own Google Maps Android API key if map previews are needed.
+3. **Configure Firebase & Google Maps (optional for push notifications / map previews):**
+   - Replace the `google-services.json` files (in `TMessagesProj_App/`, `TMessagesProj/`, etc.) with your own Firebase Console configuration for `org.nayagram.platform` and `org.nayagram.platform.beta`.
+   - Set your Google Maps Android API key for `com.google.android.maps.v2.API_KEY` inside `TMessagesProj/config/*/AndroidManifest*.xml`.
 
-4. **Configure Release Signing (optional for signed release builds):**
-   Provide your own keystore path and credentials via environment variables or Gradle `-P` flags (never commit keystores or passwords):
+4. **Configure Release Signing (for signed APK / AAB builds):**  
+   Supply your keystore path and passwords via environment variables or `-P` flags (never commit keystores or passwords):
    ```bash
    export RELEASE_KEYSTORE_PATH=/path/to/your-release.jks
    export RELEASE_STORE_PASSWORD=your_store_password
@@ -77,46 +92,37 @@ You will require **JDK 17**, **Android SDK 36**, **CMake 3.22.1**, and **Android
    export RELEASE_KEY_ALIAS=your_key_alias
    ```
 
-5. **Open in Android Studio** (use **Open**, not Import) or build from the terminal.
+5. **Open in Android Studio** using **File → Open** (do **not** use Import) or build via terminal.
 
 ---
 
-### Terminal Build Tasks
+## 💻 Terminal Build Commands
 
-- **Debug APK:** `./gradlew :TMessagesProj_App:assembleAfatDebug`
-- **Release APK:** `./gradlew :TMessagesProj_App:assembleAfatRelease`
-- **Play Store Release AAB (SDK 24+):** `./gradlew :TMessagesProj_App:bundleBundleAfat_SDK23Release`
-- **Play Store Bundle (Default):** `./gradlew :TMessagesProj_App:bundleBundleAfatRelease`
-
----
-
-### Localization
-We welcome community contributions for localization and translations. Please submit pull requests or reach out at [support.nayagram@gmail.com](mailto:support.nayagram@gmail.com).
-
-### Community & Channels
-- **Telegram:** [@NayaGramPro](https://t.me/NayaGramPro)
-- **Twitter / X:** [@NayaGramPro](https://x.com/NayaGramPro)
-- **YouTube:** [@NayaGramPro](https://youtube.com/@NayaGramPro)
-- **Facebook:** [@NayaGramPro](https://facebook.com/NayaGramPro)
-- **Email:** support.nayagram@gmail.com
+| Build Target | Command |
+| :--- | :--- |
+| **Debug APK** | `./gradlew :TMessagesProj_App:assembleAfatDebug` |
+| **Universal Release APK** | `./gradlew :TMessagesProj_App:assembleAfatRelease` |
+| **Google Play AAB (SDK 24+)** | `./gradlew :TMessagesProj_App:bundleBundleAfat_SDK23Release` |
+| **Google Play AAB (Default)** | `./gradlew :TMessagesProj_App:bundleBundleAfatRelease` |
 
 ---
 
-### License
-NayaGram for Android is licensed under the **GNU General Public License v2.0 or later**.  
-*For original Telegram documentation, see [README_TELEGRAM.md](README_TELEGRAM.md).*
+## 🌍 Localization & Community
+
+We welcome community contributions for translations, bug fixes, and improvements. Pull requests are welcome, or contact us at [**support.nayagram@gmail.com**](mailto:support.nayagram@gmail.com).
+
+- **Telegram Channel:** [**@NayaGramPro**](https://t.me/NayaGramPro)
+- **Twitter / X:** [**@NayaGramPro**](https://x.com/NayaGramPro)
+- **YouTube:** [**@NayaGramPro**](https://youtube.com/@NayaGramPro)
+- **Facebook:** [**@NayaGramPro**](https://facebook.com/NayaGramPro)
+- **Support Email:** [**support.nayagram@gmail.com**](mailto:support.nayagram@gmail.com)
 
 ---
 
-## 🏛️ About 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦
-
-**𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦** is an independent technology initiative dedicated to delivering next-generation, high-performance, and privacy-respecting communication tools.
-
-### ⚖️ Copyright & Trademarks
+## 📜 License & Trademarks
+- Licensed under the [**GNU General Public License v2.0 or later**](LICENSE) *(see also [README_TELEGRAM.md](README_TELEGRAM.md))*.
 - **Copyright © 2026 𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦.** All rights reserved.
 - **Telegram** is a registered trademark of Telegram FZ-LLC / Telegram Messenger Inc.
-- **NayaGram** is an independent client application built on the official open-source Telegram Android codebase under the terms of the **GNU General Public License (GPL) v2.0 or later**.
-- Inquiries: [support.nayagram@gmail.com](mailto:support.nayagram@gmail.com).
 
 <p align="center">
   <sub>Built with dedication, passion, and integrity by <b>𝐍𝐚𝐲𝐚𝐆𝐫𝐚𝐦 𝐏𝐥𝐚𝐭𝐟𝐨𝐫𝐦</b>.</sub>
