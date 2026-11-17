@@ -285,7 +285,7 @@ public class NGSafetyActivity extends BaseFragment {
         content.addView(revealSecret, params(0, 6));
         revealSecret.setOnClickListener(v -> {
             boolean hidden = secretText.getText().toString().equals("••••••••••••••••••••••••••••••••");
-            secretText.setText(hidden ? secret : "••••••••••••••••••••••••••••••••");
+            secretText.setText(!hidden ? "••••••••••••••••••••••••••••••••" : secret);
             revealSecret.setText(hidden ? "Hide Secret" : "Show Secret");
         });
         Button copy = button(context, "Copy Secret");
