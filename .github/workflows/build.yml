@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Required by TMessagesProj/build.gradle for every Gradle invocation (including clean).
-      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || '0' }}
-      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || 'YOUR_TELEGRAM_API_HASH' }}
+      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || '2040' }}
+      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || 'b18441a1ed607e10a39fb2141292de76' }}
 
     steps:
       - name: Free Disk Space
@@ -75,9 +75,9 @@ jobs:
         run: |
           set -e
           mkdir -p TMessagesProj/config
-          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-changeit}" | tr -d "\r\n")
+          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-Naya\$Gram@2026&TGPremik}" | tr -d "\r\n")
           KEY_PASS=$(echo "${RELEASE_KEY_PASSWORD:-$STORE_PASS}" | tr -d "\r\n")
-          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-nayagram_ci_key}" | tr -d "\r\n")
+          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-payagrampro_key}" | tr -d "\r\n")
           B64_DATA="${RELEASE_KEYSTORE_BASE64:-$RELEASE_KEY_STORE}"
           if [ -n "$B64_DATA" ]; then
             echo "Decoding release keystore from Base64 secret..."
@@ -190,9 +190,9 @@ jobs:
           RELEASE_KEYSTORE_PATH: ${{ github.workspace }}/TMessagesProj/config/nayagrampro.jks
         run: |
           set -e
-          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-changeit}" | tr -d "\r\n")
+          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-Naya\$Gram@2026&TGPremik}" | tr -d "\r\n")
           KEY_PASS=$(echo "${RELEASE_KEY_PASSWORD:-$STORE_PASS}" | tr -d "\r\n")
-          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-nayagram_ci_key}" | tr -d "\r\n")
+          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-payagrampro_key}" | tr -d "\r\n")
           chmod +x gradlew
           ./gradlew :TMessagesProj_App:bundleBundleAfat_SDK23Release \
             -PRELEASE_STORE_PASSWORD="$STORE_PASS" \
@@ -215,6 +215,7 @@ jobs:
               e_phentsize, e_phnum = struct.unpack_from('<HH', data, 54)
               return [struct.unpack_from('<Q', data, e_phoff + i * e_phentsize + 48)[0]
                       for i in range(e_phnum) if struct.unpack_from('<I', data, e_phoff + i * e_phentsize)[0] == 1]
+
           with zipfile.ZipFile(path) as z:
               names = z.namelist()
               libs = sorted(n for n in names if n.endswith('/libtmessages.49.so'))
@@ -248,9 +249,9 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
         run: |
           set -e
-          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-changeit}" | tr -d "\r\n")
+          STORE_PASS=$(echo "${RELEASE_STORE_PASSWORD:-Naya\$Gram@2026&TGPremik}" | tr -d "\r\n")
           KEY_PASS=$(echo "${RELEASE_KEY_PASSWORD:-$STORE_PASS}" | tr -d "\r\n")
-          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-nayagram_ci_key}" | tr -d "\r\n")
+          KEY_ALIAS=$(echo "${RELEASE_KEY_ALIAS:-payagrampro_key}" | tr -d "\r\n")
           AAB_FILE=$(find TMessagesProj_App/build/outputs/bundle -name "*.aab" | head -n 1)
           if [ -z "$AAB_FILE" ]; then
             echo "::error::No AAB found"
@@ -355,7 +356,7 @@ jobs:
             - **Version Name**: `${{ env.APP_VERSION_NAME }}`
             - **Background Auto-Reply Engine**: Reliable FCM push wake lock, 64-bit ID parsing, min-peer recovery, and deduplication across offline/killed states.
             - **Anti-Delete Hardening**: Protected push deletions, channel post media/replydata preservation, and persistent dialog preview badges.
-            - **Glowing AI & Pencil Formatting Tools**: Animated vibrant glowing AI button, sleek pencil formatting menu (with Quote, Spoiler, Bold, Italic, Mono, Strike, Underline, Create Link, Date, Regular & Text Style), 16 KB compliance, and Play Store version 41052, MTProto Layer 233 (Telegram 13.2.2), fixed Bot API 10.4 Interactive Widgets (twidget/widget-sandbox v0.6.5), Screenshots/Screen Recording support, and redesigned Voice Changer UI/UX with Male & Female voice presets.
+            - **Glowing AI & Pencil Formatting Tools**: Animated vibrant glowing AI button, sleek pencil formatting menu (with Quote, Spoiler, Bold, Italic, Mono, Strike, Underline, Create Link, Date, Regular & Text Style), 16 KB compliance, and Play Store version 41062, MTProto Layer 233 (Telegram 13.2.2), fixed Bot API 10.4 Interactive Widgets (twidget/widget-sandbox v0.6.5), Screenshots/Screen Recording support, and redesigned Voice Changer UI/UX with Male & Female voice presets.
           files: |
             build_output/NayaGram-Release.apk
             build_output/NayaGram-Release.aab
